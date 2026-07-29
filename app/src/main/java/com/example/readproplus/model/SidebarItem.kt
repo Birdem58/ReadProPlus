@@ -16,6 +16,8 @@ import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.ui.graphics.vector.ImageVector
 
+import androidx.compose.material.icons.filled.BarChart
+
 enum class SidebarSection(
     val label: String,
     val icon: ImageVector,
@@ -30,6 +32,7 @@ enum class SidebarSection(
     COLLECTIONS("Collections", Icons.Default.BookmarkBorder),
     FOLDERS("Folders", Icons.Default.Folder),
     DOWNLOADS("Downloads", Icons.Default.Download),
+    READING_STATS("Reading Stats", Icons.Default.BarChart),
     TRASH("Trash", Icons.Default.Delete),
     SETTINGS("Settings", Icons.Default.Settings),
 }

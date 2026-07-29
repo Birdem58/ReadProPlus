@@ -82,6 +82,11 @@ class SidebarViewModel(application: Application) : AndroidViewModel(application)
         refresh()
     }
 
+    fun toggleHaveRead(bookId: String) {
+        repository.toggleHaveRead(bookId)
+        refresh()
+    }
+
     fun createCollection(name: String) {
         val collection = BookCollection(
             id = UUID.randomUUID().toString(),

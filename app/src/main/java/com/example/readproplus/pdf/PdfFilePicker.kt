@@ -15,6 +15,26 @@ fun rememberPdfPickerLauncher(
     uri?.let { onPdfSelected(it) }
 }
 
+@Composable
+fun rememberBatchDocumentPickerLauncher(
+    onDocumentsSelected: (List<android.net.Uri>) -> Unit,
+) = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.OpenMultipleDocuments(),
+) { uris ->
+    if (uris.isNotEmpty()) {
+        onDocumentsSelected(uris)
+    }
+}
+
+@Composable
+fun rememberFolderPickerLauncher(
+    onFolderSelected: (android.net.Uri) -> Unit,
+) = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.OpenDocumentTree(),
+) { uri ->
+    uri?.let { onFolderSelected(it) }
+}
+
 fun getPdfDisplayName(
     context: android.content.Context,
     uri: android.net.Uri,

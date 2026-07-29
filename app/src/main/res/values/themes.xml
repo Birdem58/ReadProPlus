@@ -2,7 +2,7 @@
 <resources>
 
     <style name="Theme.ReadProPlus" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowBackground">@color/readproplus_startup_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>

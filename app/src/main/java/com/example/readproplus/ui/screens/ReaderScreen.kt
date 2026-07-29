@@ -21,77 +21,99 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ColorLens
+import androidx.compose.material.icons.filled.FormatSize
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.sp
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.readproplus.data.AnnotationRepository
+import com.example.readproplus.data.ReaderSettingsRepository
+import com.example.readproplus.model.BookNote
+import com.example.readproplus.model.Bookmark
+import com.example.readproplus.model.ReaderSettings
 import com.example.readproplus.model.ReadingMode
 import com.example.readproplus.model.ScrollMode
 import com.example.readproplus.model.pdf.PdfDocument
+import com.example.readproplus.model.tts.GeneratedAudio
 import com.example.readproplus.model.tts.TtsState
 import com.example.readproplus.model.tts.TtsVoice
+import com.example.readproplus.tts.VoiceDownloadProgress
+import com.example.readproplus.ui.components.KokoroAudioDialog
+import com.example.readproplus.ui.components.NotesBookmarksSheet
 import com.example.readproplus.ui.components.PdfErrorBanner
+import com.example.readproplus.ui.components.ReaderSettingsSheet
+import com.example.readproplus.ui.components.SmartZoomableCanvas
 import com.example.readproplus.ui.components.TableOfContentsSheet
 import com.example.readproplus.ui.components.TtsControlBar
-import com.example.readproplus.ui.components.TtsDurationDialog
 import com.example.readproplus.ui.components.TtsSpeedDialog
 import com.example.readproplus.ui.components.VoicePickerSheet
 import com.example.readproplus.ui.theme.ReaderColorScheme
 import com.example.readproplus.ui.theme.readerColorScheme
-import com.example.readproplus.tts.VoiceDownloadProgress
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 private val DarkTeal = Color(0xFF006064)
 private val BlueHandle = Color(0xFF4FC3F7)
+private val ReaderProgressThumbColor = Color(0xFF9DEBF2)
 private val WhiteText = Color(0xFFFFFFFF)
 
 private val fontSizeOptions = listOf(14, 16, 18, 20, 22, 24, 28)
@@ -109,12 +131,15 @@ fun ReaderScreen(
     pageHighlights: Set<String> = emptySet(),
     ttsState: TtsState = TtsState.Idle,
     ttsVolume: Float = 1f,
+    generatedAudios: List<GeneratedAudio> = emptyList(),
     ttsVoices: List<TtsVoice> = TtsVoice.ALL,
     selectedTtsVoice: TtsVoice = TtsVoice.NICOLE,
     voiceAvailability: Map<String, Boolean> = emptyMap(),
     voiceDownloadProgress: VoiceDownloadProgress? = null,
     onTtsStart: (String) -> Unit = {},
-    onTtsDurationStart: (startPageIndex: Int, minutes: Int, mainTextOnly: Boolean) -> Unit = { _, _, _ -> },
+    onTtsPageRangeStart: (startPage: Int, endPage: Int, mainTextOnly: Boolean) -> Unit = { _, _, _ -> },
+    onGeneratedAudioPlay: (GeneratedAudio) -> Unit = {},
+    onGeneratedAudioDelete: (GeneratedAudio) -> Unit = {},
     onTtsPause: () -> Unit = {},
     onTtsResume: () -> Unit = {},
     onTtsStop: () -> Unit = {},
@@ -124,29 +149,92 @@ fun ReaderScreen(
     onTtsSpeedSelected: (Float) -> Unit = {},
     onTtsVolumeChanged: (Float) -> Unit = {},
     onTtsVoiceSelected: (TtsVoice) -> Unit = {},
+    initialReaderSettings: ReaderSettings? = null,
+    onReaderSettingsChanged: (ReaderSettings) -> Unit = {},
 ) {
     val scheme = readerColorScheme(readingMode)
+    val context = LocalContext.current
+    val annotationRepo = remember { AnnotationRepository(context) }
+
     var currentPage by remember { mutableIntStateOf(1) }
     var fontSizeIndex by remember { mutableIntStateOf(2) }
     var brightness by remember { mutableFloatStateOf(1f) }
-    var progress by remember { mutableFloatStateOf(0f) }
+    var sliderPosition by remember { mutableFloatStateOf(0f) }
+    var selectedHighlightColor by remember { mutableStateOf(Color(0xFFFFD54F)) }
+
+    val readerSettingsRepository = remember { ReaderSettingsRepository(context) }
+    var readerSettings by remember(document?.id, initialReaderSettings) {
+        mutableStateOf(initialReaderSettings ?: readerSettingsRepository.getSettings())
+    }
 
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
     var currentMatchIndex by remember { mutableIntStateOf(0) }
     var showTocSheet by remember { mutableStateOf(false) }
-    var showTtsDurationDialog by remember { mutableStateOf(false) }
+    var showKokoroAudioDialog by remember { mutableStateOf(false) }
     var showTtsSpeedDialog by remember { mutableStateOf(false) }
     var showVoicePicker by remember { mutableStateOf(false) }
+    var showReaderSettingsSheet by remember { mutableStateOf(false) }
+    var showNotesSheet by remember { mutableStateOf(false) }
+
+    var bookmarks by remember { mutableStateOf(emptyList<Bookmark>()) }
+    var notes by remember { mutableStateOf(emptyList<BookNote>()) }
+
     var mainTextOnly by rememberSaveable { mutableStateOf(true) }
     var ttsCurrentSpeed by remember { mutableFloatStateOf(1.0f) }
     val searchFocusRequester = remember { FocusRequester() }
     val searchFocusManager = LocalFocusManager.current
+    val verticalListState = remember(document?.id) { LazyListState() }
+    val readerScope = rememberCoroutineScope()
 
     val currentFontSize = fontSizeOptions[fontSizeIndex]
     val pages = document?.pages ?: emptyList()
     val totalPages = pages.size
     val bookTitle = document?.title ?: "Unknown"
+    val isPageImageMode = readerSettings.renderMode == "PAGE_IMAGE" || document?.isImageBased == true
+
+    fun refreshAnnotations() {
+        document?.let { doc ->
+            bookmarks = annotationRepo.getBookmarksForBook(doc.id)
+            notes = annotationRepo.getNotesForBook(doc.id)
+        }
+    }
+
+    LaunchedEffect(document?.id) {
+        refreshAnnotations()
+    }
+
+    LaunchedEffect(currentPage, totalPages, scrollMode) {
+        if (scrollMode != ScrollMode.VERTICAL) {
+            if (totalPages > 1) {
+                sliderPosition = (currentPage - 1).toFloat() / (totalPages - 1).toFloat()
+            } else {
+                sliderPosition = 0f
+            }
+        }
+    }
+
+    LaunchedEffect(scrollMode, isPageImageMode, totalPages, verticalListState) {
+        if (scrollMode != ScrollMode.VERTICAL || isPageImageMode || totalPages == 0) return@LaunchedEffect
+
+        snapshotFlow {
+            val firstVisibleItem = verticalListState.layoutInfo.visibleItemsInfo.firstOrNull()
+            val itemSize = firstVisibleItem?.size ?: 0
+            val withinPageProgress = if (itemSize > 0) {
+                verticalListState.firstVisibleItemScrollOffset.toFloat() / itemSize.toFloat()
+            } else {
+                0f
+            }
+            verticalListState.firstVisibleItemIndex + withinPageProgress
+        }.collectLatest { position ->
+            currentPage = (position.toInt() + 1).coerceIn(1, totalPages)
+            sliderPosition = if (totalPages > 1) {
+                (position / (totalPages - 1).toFloat()).coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+        }
+    }
 
     val searchMatchPages = remember(searchQuery, pages) {
         if (searchQuery.isBlank()) {
@@ -156,6 +244,10 @@ fun ReaderScreen(
                 if (content.contains(searchQuery, ignoreCase = true)) index else null
             }
         }
+    }
+
+    val isCurrentPageBookmarked = remember(currentPage, bookmarks) {
+        bookmarks.any { it.pageNumber == currentPage }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -200,11 +292,16 @@ fun ReaderScreen(
                     onSearchClick = { isSearchActive = true },
                     onTocClick = { showTocSheet = true },
                     onCitationsClick = onCitationsClick,
-                    onTtsStartClick = {
-                        showTtsDurationDialog = true
-                    },
-                    onVoiceClick = {
-                        showVoicePicker = true
+                    onTtsStartClick = { showKokoroAudioDialog = true },
+                    onVoiceClick = { showVoicePicker = true },
+                    onNotesClick = { showNotesSheet = true },
+                    onSettingsClick = { showReaderSettingsSheet = true },
+                    isBookmarked = isCurrentPageBookmarked,
+                    onBookmarkToggle = {
+                        document?.let { doc ->
+                            annotationRepo.toggleBookmark(doc.id, doc.title, currentPage)
+                            refreshAnnotations()
+                        }
                     },
                 )
             }
@@ -213,6 +310,15 @@ fun ReaderScreen(
                 brightness = brightness,
                 scheme = scheme,
                 onBrightnessChange = { brightness = it },
+                renderMode = readerSettings.renderMode,
+                onRenderModeToggle = {
+                    val updated = readerSettings.copy(
+                        renderMode = if (readerSettings.renderMode == "TEXT_REFLOW") "PAGE_IMAGE" else "TEXT_REFLOW",
+                    )
+                    readerSettings = updated
+                    readerSettingsRepository.saveSettings(updated)
+                    onReaderSettingsChanged(updated)
+                },
             )
 
             Box(
@@ -221,39 +327,60 @@ fun ReaderScreen(
                     .fillMaxWidth()
                     .background(scheme.background),
             ) {
-                when (scrollMode) {
-                    ScrollMode.PAGED -> PagedContent(
-                        pages = pages,
-                        currentPage = currentPage,
-                        currentFontSize = currentFontSize,
+                if (isPageImageMode) {
+                    SmartZoomableCanvas(
+                        pageIndex = currentPage - 1,
+                        document = document,
                         scheme = scheme,
-                        searchQuery = searchQuery,
-                        highlightColor = scheme.highlightColor,
-                        onPrevPage = { if (currentPage > 1) currentPage-- },
+                        onPreviousPage = { if (currentPage > 1) currentPage-- },
                         onNextPage = { if (currentPage < totalPages) currentPage++ },
-                        onHighlightToggle = onHighlightToggle,
-                        bookId = document?.id ?: "",
-                        bookTitle = bookTitle,
-                        pageHighlights = pageHighlights,
                     )
-                    ScrollMode.VERTICAL -> VerticalContent(
-                        pages = pages,
-                        currentFontSize = currentFontSize,
-                        scheme = scheme,
-                        searchQuery = searchQuery,
-                        highlightColor = scheme.highlightColor,
-                        onHighlightToggle = onHighlightToggle,
-                        bookId = document?.id ?: "",
-                        bookTitle = bookTitle,
-                        pageHighlights = pageHighlights,
-                    )
+                } else {
+                    when (scrollMode) {
+                        ScrollMode.PAGED -> PagedContent(
+                            pages = pages,
+                            currentPage = currentPage,
+                            currentFontSize = currentFontSize,
+                            scheme = scheme,
+                            marginDp = readerSettings.horizontalMarginDp,
+                            lineSpacingMultiplier = readerSettings.lineSpacingMultiplier,
+                            fontFamily = readerSettings.fontFamily,
+                            textAlignment = readerSettings.alignment,
+                            searchQuery = searchQuery,
+                            highlightColor = selectedHighlightColor,
+                            onPrevPage = { if (currentPage > 1) currentPage-- },
+                            onNextPage = { if (currentPage < totalPages) currentPage++ },
+                            onHighlightToggle = { bId, bTitle, pNum, text, _ ->
+                                onHighlightToggle(bId, bTitle, pNum, text, selectedHighlightColor.value.toLong())
+                            },
+                            bookId = document?.id ?: "",
+                            bookTitle = bookTitle,
+                            pageHighlights = pageHighlights,
+                        )
+                        ScrollMode.VERTICAL -> VerticalContent(
+                            pages = pages,
+                            state = verticalListState,
+                            currentFontSize = currentFontSize,
+                            scheme = scheme,
+                            marginDp = readerSettings.horizontalMarginDp,
+                            lineSpacingMultiplier = readerSettings.lineSpacingMultiplier,
+                            fontFamily = readerSettings.fontFamily,
+                            textAlignment = readerSettings.alignment,
+                            searchQuery = searchQuery,
+                            highlightColor = selectedHighlightColor,
+                            onHighlightToggle = { bId, bTitle, pNum, text, _ ->
+                                onHighlightToggle(bId, bTitle, pNum, text, selectedHighlightColor.value.toLong())
+                            },
+                            bookId = document?.id ?: "",
+                            bookTitle = bookTitle,
+                            pageHighlights = pageHighlights,
+                        )
+                    }
                 }
 
                 EngelleButton(
                     modifier = Modifier.align(Alignment.BottomEnd),
-                    onClick = {
-                        showTtsDurationDialog = true
-                    },
+                    onClick = { showKokoroAudioDialog = true },
                 )
             }
 
@@ -287,10 +414,18 @@ fun ReaderScreen(
             BottomReaderNavBar(
                 currentPage = currentPage,
                 totalPages = totalPages,
-                progress = progress,
-                onProgressChange = {
-                    progress = it
-                    currentPage = (it * (totalPages - 1)).toInt() + 1
+                sliderPosition = sliderPosition,
+                onSliderDrag = { sliderPosition = it },
+                onSliderDragFinished = {
+                    val newPage = (sliderPosition * (totalPages - 1)).toInt() + 1
+                    if (newPage in 1..totalPages) {
+                        currentPage = newPage
+                        if (scrollMode == ScrollMode.VERTICAL && !isPageImageMode) {
+                            readerScope.launch {
+                                verticalListState.animateScrollToItem(newPage - 1)
+                            }
+                        }
+                    }
                 },
             )
         }
@@ -300,21 +435,31 @@ fun ReaderScreen(
                 tocEntries = document.toc,
                 onItemClick = { entry ->
                     currentPage = entry.pageNumber.coerceIn(1, totalPages)
+                    if (scrollMode == ScrollMode.VERTICAL && !isPageImageMode) {
+                        readerScope.launch {
+                            verticalListState.animateScrollToItem(currentPage - 1)
+                        }
+                    }
                     showTocSheet = false
                 },
                 onDismiss = { showTocSheet = false },
             )
         }
 
-        if (showTtsDurationDialog) {
-            TtsDurationDialog(
+        if (showKokoroAudioDialog) {
+            KokoroAudioDialog(
+                totalPages = totalPages,
+                currentPage = currentPage,
                 mainTextOnly = mainTextOnly,
+                generatedAudios = generatedAudios,
                 onMainTextOnlyChange = { mainTextOnly = it },
-                onGenerate = { minutes ->
-                    showTtsDurationDialog = false
-                    onTtsDurationStart(currentPage - 1, minutes, mainTextOnly)
+                onGenerate = { startPage, endPage, mainTextOnlyValue ->
+                    showKokoroAudioDialog = false
+                    onTtsPageRangeStart(startPage, endPage, mainTextOnlyValue)
                 },
-                onDismiss = { showTtsDurationDialog = false },
+                onPlay = onGeneratedAudioPlay,
+                onDelete = onGeneratedAudioDelete,
+                onDismiss = { showKokoroAudioDialog = false },
             )
         }
 
@@ -348,6 +493,52 @@ fun ReaderScreen(
                 onDismiss = { showVoicePicker = false },
             )
         }
+
+        if (showReaderSettingsSheet) {
+            ReaderSettingsSheet(
+                settings = readerSettings,
+                scheme = scheme,
+                scrollMode = scrollMode,
+                onScrollModeChange = onScrollModeChange,
+                readingMode = readingMode,
+                onReadingModeChange = onReadingModeChange,
+                onSettingsChanged = {
+                    readerSettings = it
+                    readerSettingsRepository.saveSettings(it)
+                    onReaderSettingsChanged(it)
+                },
+                onDismiss = { showReaderSettingsSheet = false },
+            )
+        }
+
+        if (showNotesSheet && document != null) {
+            NotesBookmarksSheet(
+                bookTitle = bookTitle,
+                currentPage = currentPage,
+                bookmarks = bookmarks,
+                notes = notes,
+                scheme = scheme,
+                onAddNote = { noteText ->
+                    annotationRepo.addNote(document.id, bookTitle, currentPage, noteText)
+                    refreshAnnotations()
+                },
+                onDeleteNote = { noteId ->
+                    annotationRepo.removeNote(noteId)
+                    refreshAnnotations()
+                },
+                onToggleBookmark = {
+                    annotationRepo.toggleBookmark(document.id, bookTitle, currentPage)
+                    refreshAnnotations()
+                },
+                onToggleBookmarkAtPage = { pageNumber ->
+                    annotationRepo.toggleBookmark(document.id, bookTitle, pageNumber)
+                    refreshAnnotations()
+                },
+                isCurrentPageBookmarked = isCurrentPageBookmarked,
+                onDismiss = { showNotesSheet = false },
+            )
+        }
+
     }
 }
 
@@ -364,6 +555,10 @@ private fun TopReaderBar(
     onCitationsClick: () -> Unit = {},
     onTtsStartClick: () -> Unit = {},
     onVoiceClick: () -> Unit = {},
+    onNotesClick: () -> Unit = {},
+    onSettingsClick: () -> Unit = {},
+    isBookmarked: Boolean = false,
+    onBookmarkToggle: () -> Unit = {},
 ) {
     var showSettingsMenu by remember { mutableStateOf(false) }
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
@@ -380,133 +575,38 @@ private fun TopReaderBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBackClick) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = WhiteText,
-                )
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = WhiteText)
             }
 
             Spacer(Modifier.weight(1f))
 
-            IconButton(onClick = onTtsStartClick) {
+            IconButton(onClick = onBookmarkToggle) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                    contentDescription = "Text to Speech",
-                    tint = WhiteText,
+                    imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                    contentDescription = "Bookmark",
+                    tint = if (isBookmarked) Color(0xFFFFD54F) else WhiteText,
                 )
+            }
+
+            IconButton(onClick = onNotesClick) {
+                Icon(Icons.Default.PushPin, contentDescription = "Notes", tint = WhiteText)
+            }
+
+            IconButton(onClick = onTtsStartClick) {
+                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Text to Speech", tint = WhiteText)
             }
 
             IconButton(onClick = onSearchClick) {
-                Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = "Search",
-                    tint = WhiteText,
-                )
+                Icon(Icons.Default.Search, contentDescription = "Search", tint = WhiteText)
             }
 
             IconButton(onClick = onTocClick) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Article,
-                    contentDescription = "Table of Contents",
-                    tint = WhiteText,
-                )
+                Icon(Icons.AutoMirrored.Filled.Article, contentDescription = "Table of Contents", tint = WhiteText)
             }
 
-            IconButton(onClick = onCitationsClick) {
-                Icon(
-                    imageVector = Icons.Filled.PushPin,
-                    contentDescription = "Highlights",
-                    tint = WhiteText,
-                )
+            IconButton(onClick = onSettingsClick) {
+                Icon(Icons.Default.Settings, contentDescription = "Layout Settings", tint = WhiteText)
             }
-
-            Box {
-                IconButton(onClick = { showSettingsMenu = true }) {
-                    Icon(
-                        imageVector = Icons.Filled.Settings,
-                        contentDescription = "Settings",
-                        tint = WhiteText,
-                    )
-                }
-                DropdownMenu(
-                    expanded = showSettingsMenu,
-                    onDismissRequest = { showSettingsMenu = false },
-                ) {
-                    Text(
-                        text = "View Navigation",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Horizontal (Paged)") },
-                        onClick = {
-                            showSettingsMenu = false
-                            onScrollModeChange(ScrollMode.PAGED)
-                        },
-                        trailingIcon = {
-                            if (scrollMode == ScrollMode.PAGED) {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Vertical (Scroll)") },
-                        onClick = {
-                            showSettingsMenu = false
-                            onScrollModeChange(ScrollMode.VERTICAL)
-                        },
-                        trailingIcon = {
-                            if (scrollMode == ScrollMode.VERTICAL) {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        },
-                    )
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Text(
-                        text = "Theme",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                    )
-                    ReadingMode.entries.forEach { mode ->
-                        DropdownMenuItem(
-                            text = { Text(mode.label) },
-                            onClick = {
-                                showSettingsMenu = false
-                                onReadingModeChange(mode)
-                            },
-                            trailingIcon = {
-                                if (readingMode == mode) {
-                                    Icon(
-                                        Icons.Filled.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                            },
-                        )
-                    }
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    DropdownMenuItem(
-                        text = { Text("Kokoro voices") },
-                        onClick = {
-                            showSettingsMenu = false
-                            onVoiceClick()
-                        },
-                    )
-                }
-            }
-
         }
 
         Row(
@@ -531,6 +631,8 @@ private fun BrightnessSubHeader(
     brightness: Float,
     scheme: ReaderColorScheme,
     onBrightnessChange: (Float) -> Unit,
+    renderMode: String,
+    onRenderModeToggle: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -539,11 +641,7 @@ private fun BrightnessSubHeader(
             .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "☀",
-            fontSize = 14.sp,
-            color = scheme.textColor,
-        )
+        Text("☀", fontSize = 14.sp, color = scheme.textColor)
         Spacer(Modifier.width(8.dp))
         Slider(
             value = brightness,
@@ -556,6 +654,7 @@ private fun BrightnessSubHeader(
                 inactiveTrackColor = scheme.dividerColor,
             ),
         )
+
     }
 }
 
@@ -566,6 +665,10 @@ private fun PagedContent(
     currentPage: Int,
     currentFontSize: Int,
     scheme: ReaderColorScheme,
+    marginDp: Int = 24,
+    lineSpacingMultiplier: Float = 1.5f,
+    fontFamily: String = "Sans-Serif",
+    textAlignment: String = "Justify",
     searchQuery: String = "",
     highlightColor: Color = Color.Transparent,
     onPrevPage: () -> Unit,
@@ -580,8 +683,8 @@ private fun PagedContent(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(
-                    start = 24.dp,
-                    end = 24.dp,
+                    start = marginDp.dp,
+                    end = marginDp.dp,
                     top = 16.dp,
                     bottom = 16.dp,
                 ),
@@ -607,9 +710,10 @@ private fun PagedContent(
                                 savedHighlightColor = highlightColor,
                             ),
                             fontSize = currentFontSize.sp,
-                            lineHeight = (currentFontSize + 8).sp,
+                            lineHeight = (currentFontSize * lineSpacingMultiplier).sp,
+                            fontFamily = readerFontFamily(fontFamily),
                             color = scheme.textColor,
-                            textAlign = TextAlign.Justify,
+                            textAlign = readerTextAlign(textAlignment),
                             modifier = Modifier.combinedClickable(
                                 onClick = {},
                                 onLongClick = {
@@ -625,23 +729,9 @@ private fun PagedContent(
         }
 
         Row(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier
-                    .weight(0.25f)
-                    .fillMaxHeight()
-                    .clickable { onPrevPage() },
-            )
-            Box(
-                modifier = Modifier
-                    .weight(0.5f)
-                    .fillMaxHeight(),
-            )
-            Box(
-                modifier = Modifier
-                    .weight(0.25f)
-                    .fillMaxHeight()
-                    .clickable { onNextPage() },
-            )
+            Box(modifier = Modifier.weight(0.25f).fillMaxHeight().clickable { onPrevPage() })
+            Box(modifier = Modifier.weight(0.5f).fillMaxHeight())
+            Box(modifier = Modifier.weight(0.25f).fillMaxHeight().clickable { onNextPage() })
         }
     }
 }
@@ -650,8 +740,13 @@ private fun PagedContent(
 @Composable
 private fun VerticalContent(
     pages: List<String>,
+    state: LazyListState,
     currentFontSize: Int,
     scheme: ReaderColorScheme,
+    marginDp: Int = 24,
+    lineSpacingMultiplier: Float = 1.5f,
+    fontFamily: String = "Sans-Serif",
+    textAlignment: String = "Justify",
     searchQuery: String = "",
     highlightColor: Color = Color.Transparent,
     onHighlightToggle: (bookId: String, bookTitle: String, pageNumber: Int, text: String, color: Long) -> Unit = { _, _, _, _, _ -> },
@@ -662,8 +757,8 @@ private fun VerticalContent(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(start = 24.dp, end = 24.dp, top = 16.dp, bottom = 16.dp),
-        state = rememberLazyListState(),
+            .padding(start = marginDp.dp, end = marginDp.dp, top = 16.dp, bottom = 16.dp),
+        state = state,
         userScrollEnabled = true,
     ) {
         itemsIndexed(pages) { pageIndex, pageContent ->
@@ -689,9 +784,10 @@ private fun VerticalContent(
                                 savedHighlightColor = highlightColor,
                             ),
                             fontSize = currentFontSize.sp,
-                            lineHeight = (currentFontSize + 8).sp,
+                            lineHeight = (currentFontSize * lineSpacingMultiplier).sp,
+                            fontFamily = readerFontFamily(fontFamily),
                             color = scheme.textColor,
-                            textAlign = TextAlign.Justify,
+                            textAlign = readerTextAlign(textAlignment),
                             modifier = Modifier.combinedClickable(
                                 onClick = {},
                                 onLongClick = {
@@ -712,6 +808,19 @@ private fun VerticalContent(
             }
         }
     }
+}
+
+private fun readerFontFamily(name: String): FontFamily = when (name.lowercase()) {
+    "serif" -> FontFamily.Serif
+    "monospace" -> FontFamily.Monospace
+    else -> FontFamily.SansSerif
+}
+
+private fun readerTextAlign(name: String): TextAlign = when (name.lowercase()) {
+    "left" -> TextAlign.Start
+    "center" -> TextAlign.Center
+    "right" -> TextAlign.End
+    else -> TextAlign.Justify
 }
 
 private fun buildTextWithHighlights(
@@ -787,14 +896,6 @@ private fun EngelleButton(
                 text = "Engelle",
                 color = WhiteText,
                 fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = "|\u2194|",
-                color = WhiteText,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
             )
         }
     }
@@ -805,8 +906,9 @@ private fun EngelleButton(
 private fun BottomReaderNavBar(
     currentPage: Int,
     totalPages: Int,
-    progress: Float,
-    onProgressChange: (Float) -> Unit,
+    sliderPosition: Float,
+    onSliderDrag: (Float) -> Unit,
+    onSliderDragFinished: () -> Unit,
 ) {
     val navBarPadding = WindowInsets.navigationBars.asPaddingValues()
     Column(
@@ -851,25 +953,23 @@ private fun BottomReaderNavBar(
         Spacer(Modifier.height(2.dp))
 
         Slider(
-            value = if (totalPages > 1) (currentPage - 1).toFloat() / (totalPages - 1).toFloat() else 0f,
-            onValueChange = {
-                val page = (it * (totalPages - 1)).toInt() + 1
-                onProgressChange(it)
-            },
+            value = sliderPosition,
+            onValueChange = onSliderDrag,
+            onValueChangeFinished = onSliderDragFinished,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp),
             colors = SliderDefaults.colors(
-                thumbColor = Color(0xFF80DEEA),
-                activeTrackColor = BlueHandle,
-                inactiveTrackColor = Color(0xFF4A9A9B),
+                thumbColor = ReaderProgressThumbColor,
+                activeTrackColor = Color.Transparent,
+                inactiveTrackColor = Color.Transparent,
             ),
             thumb = {
                 Box(
                     modifier = Modifier
                         .size(12.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF80DEEA)),
+                        .background(ReaderProgressThumbColor),
                 )
             },
         )

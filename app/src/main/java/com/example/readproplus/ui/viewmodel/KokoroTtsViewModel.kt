@@ -4,7 +4,9 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.readproplus.data.GeneratedAudioRepository
 import com.example.readproplus.data.TtsPreferences
+import com.example.readproplus.model.tts.GeneratedAudio
 import com.example.readproplus.model.tts.TtsConfig
 import com.example.readproplus.model.tts.TtsState
 import com.example.readproplus.model.tts.TtsVoice
@@ -36,12 +38,16 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
     private val tokenizer = KokoroTokenizer(application)
     private val inference = KokoroInference()
     private val preferences = TtsPreferences(application)
+    private val generatedAudioRepository = GeneratedAudioRepository(application)
     private val currentConfig = MutableStateFlow(TtsConfig())
     private val engine = KokoroEngine(inference, tokenizer, voiceManager, currentConfig.value)
     private val systemTts = SystemTtsReader(application)
 
     private val _ttsState = MutableStateFlow<TtsState>(TtsState.Idle)
     val ttsState: StateFlow<TtsState> = _ttsState.asStateFlow()
+
+    private val _generatedAudios = MutableStateFlow<List<GeneratedAudio>>(emptyList())
+    val generatedAudios: StateFlow<List<GeneratedAudio>> = _generatedAudios.asStateFlow()
 
     private val _downloadProgress = MutableStateFlow<DownloadProgress?>(null)
     val downloadProgress: StateFlow<DownloadProgress?> = _downloadProgress.asStateFlow()
@@ -62,6 +68,7 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
     private var voiceDownloadJob: Job? = null
     private var volumeSaveJob: Job? = null
     private var isEngineInitialized = false
+    private var generatedAudioBookId: String? = null
 
     @Volatile
     private var activeBackend = ReaderBackend.NONE
@@ -114,12 +121,35 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun startDurationReadingOrInitialize(
+    fun loadGeneratedAudios(bookId: String?) {
+        generatedAudioBookId = bookId
+        if (bookId == null) {
+            _generatedAudios.value = emptyList()
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val items = generatedAudioRepository.listByBook(bookId)
+            if (generatedAudioBookId == bookId) {
+                _generatedAudios.value = items
+            }
+        }
+    }
+
+    fun startPageRangeReading(
+        bookId: String?,
+        bookTitle: String,
         pages: List<String>,
-        startPageIndex: Int,
-        targetMinutes: Int,
+        startPage: Int,
+        endPage: Int,
         mainTextOnly: Boolean = false,
     ) {
+        if (pages.isEmpty()) {
+            _ttsState.value = TtsState.Error("There are no pages available to read.", recoverable = true)
+            return
+        }
+
+        val safeStartPage = startPage.coerceIn(1, pages.size)
+        val safeEndPage = endPage.coerceIn(safeStartPage, pages.size)
         speakingJob?.cancel()
         speakingJob = viewModelScope.launch {
             val pagesForSpeech = if (mainTextOnly) {
@@ -129,36 +159,86 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
             }
             val canUseKokoro = hasUsableKokoroAssets() && ensureNeuralEngine()
             if (!canUseKokoro) {
-                startSystemReading(pagesForSpeech, startPageIndex, targetMinutes)
+                startSystemReading(pagesForSpeech, safeStartPage - 1, safeEndPage - 1)
                 return@launch
             }
 
             activeBackend = ReaderBackend.KOKORO
             try {
-                engine.startSpeakingDuration(pagesForSpeech, startPageIndex, targetMinutes)
+                engine.startSpeakingRange(
+                    pages = pagesForSpeech,
+                    startPageIndex = safeStartPage - 1,
+                    endPageIndex = safeEndPage - 1,
+                ) { samples, durationMs ->
+                    if (bookId != null) {
+                        val updatedItems = withContext(Dispatchers.IO) {
+                            generatedAudioRepository.save(
+                                bookId = bookId,
+                                bookTitle = bookTitle,
+                                startPage = safeStartPage,
+                                endPage = safeEndPage,
+                                durationMs = durationMs,
+                                samples = samples,
+                            )
+                            generatedAudioRepository.listByBook(bookId)
+                        }
+                        if (generatedAudioBookId == bookId) {
+                            _generatedAudios.value = updatedItems
+                        }
+                    }
+                }
                 if (engine.engineState.value is EngineState.Error) {
-                    startSystemReading(pagesForSpeech, startPageIndex, targetMinutes)
+                    startSystemReading(pagesForSpeech, safeStartPage - 1, safeEndPage - 1)
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
                 Log.w(TAG, "Kokoro playback failed; using the device voice instead", error)
-                startSystemReading(pagesForSpeech, startPageIndex, targetMinutes)
+                startSystemReading(pagesForSpeech, safeStartPage - 1, safeEndPage - 1)
             }
         }
     }
 
     fun startReadingOrInitialize(text: String) {
-        startDurationReadingOrInitialize(listOf(text), 0, DEFAULT_READING_MINUTES)
+        startPageRangeReading(
+            bookId = null,
+            bookTitle = "Quick read",
+            pages = listOf(text),
+            startPage = 1,
+            endPage = 1,
+        )
     }
 
-    fun startDurationReading(
-        pages: List<String>,
-        startPageIndex: Int,
-        targetMinutes: Int,
-        mainTextOnly: Boolean = false,
-    ) {
-        startDurationReadingOrInitialize(pages, startPageIndex, targetMinutes, mainTextOnly)
+    fun playGeneratedAudio(audio: GeneratedAudio) {
+        speakingJob?.cancel()
+        speakingJob = viewModelScope.launch {
+            activeBackend = ReaderBackend.KOKORO
+            try {
+                val samples = withContext(Dispatchers.IO) {
+                    generatedAudioRepository.readSamples(audio)
+                }
+                engine.playSamples(samples)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                activeBackend = ReaderBackend.NONE
+                _ttsState.value = TtsState.Error(
+                    error.message ?: "Could not play the generated audio.",
+                    recoverable = true,
+                )
+            }
+        }
+    }
+
+    fun deleteGeneratedAudio(audio: GeneratedAudio) {
+        if (_ttsState.value is TtsState.Playing || _ttsState.value is TtsState.Paused) {
+            stopReading()
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            generatedAudioRepository.delete(audio)
+            val bookId = generatedAudioBookId ?: return@launch
+            _generatedAudios.value = generatedAudioRepository.listByBook(bookId)
+        }
     }
 
     fun cancelDownload() {
@@ -306,7 +386,9 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
                 "The ${voice.displayName} voice is not available. Download it before reading."
             }
             engine.initialize(voice)
-            engine.loadModel(modelPath)
+            withContext(Dispatchers.Default) {
+                engine.loadModel(modelPath)
+            }
             isEngineInitialized = true
             true
         } catch (error: Throwable) {
@@ -321,10 +403,10 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
     private suspend fun startSystemReading(
         pages: List<String>,
         startPageIndex: Int,
-        targetMinutes: Int,
+        endPageIndex: Int,
     ) {
         activeBackend = ReaderBackend.SYSTEM
-        systemTts.startReading(pages, startPageIndex, targetMinutes)
+        systemTts.startReading(pages, startPageIndex, endPageIndex)
             .exceptionOrNull()
             ?.let { error ->
                 activeBackend = ReaderBackend.NONE
@@ -417,7 +499,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
 
     private companion object {
         const val TAG = "KokoroTtsViewModel"
-        const val DEFAULT_READING_MINUTES = 1
         const val DEFAULT_SPEED = 1f
         const val MIN_SPEED = 0.5f
         const val MAX_SPEED = 2f

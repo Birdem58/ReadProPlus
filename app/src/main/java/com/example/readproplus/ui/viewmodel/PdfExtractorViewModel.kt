@@ -1,6 +1,7 @@
 package com.example.readproplus.ui.viewmodel
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -11,19 +12,27 @@ import com.example.readproplus.data.PdfRepository
 import com.example.readproplus.model.Highlight
 import com.example.readproplus.model.pdf.PdfDocument
 import com.example.readproplus.pdf.PdfExtractor
-import com.example.readproplus.pdf.PdfExtractorTask
 import com.example.readproplus.pdf.PdfFileResolver
 import com.example.readproplus.pdf.PdfPasswordCache
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface PdfExtractorUiState {
     data object Idle : PdfExtractorUiState
-    data class Loading(val progress: Float) : PdfExtractorUiState
+    data class Loading(
+        val progress: Float,
+        val currentPage: Int = 0,
+        val totalPages: Int = 0,
+        val currentDocument: Int = 1,
+        val totalDocuments: Int = 1,
+    ) : PdfExtractorUiState
     data class NeedsPassword(val uri: Uri, val displayName: String?) : PdfExtractorUiState
     data class Error(val message: String) : PdfExtractorUiState
     data class Success(val document: PdfDocument) : PdfExtractorUiState
@@ -40,10 +49,9 @@ class PdfExtractorViewModel(application: Application) : AndroidViewModel(applica
 
     private val resolver = PdfFileResolver(application)
     private val extractor = PdfExtractor(resolver)
-    private val extractorTask = PdfExtractorTask(resolver)
-    private val cache = BookCache()
+    private val cache = BookCache(application)
     private val passwordCache = PdfPasswordCache()
-    private val repository = PdfRepository(extractor, extractorTask, cache)
+    private val repository = PdfRepository(application, extractor, cache)
     private val highlightRepository = HighlightRepository(application)
 
     private val _state = MutableStateFlow<PdfExtractorUiState>(PdfExtractorUiState.Idle)
@@ -58,17 +66,87 @@ class PdfExtractorViewModel(application: Application) : AndroidViewModel(applica
     private val _highlights = MutableStateFlow<List<Highlight>>(emptyList())
     val highlights: StateFlow<List<Highlight>> = _highlights.asStateFlow()
 
+    private val cacheReady = CompletableDeferred<Unit>()
     private var extractionJob: Job? = null
 
     init {
-        refreshLibrary()
-        refreshHighlights()
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    cache.load()
+                }
+            } finally {
+                // Imports must not race the background restore if the user
+                // immediately selects a file from the library screen.
+                cacheReady.complete(Unit)
+            }
+            refreshLibrary()
+            refreshHighlights()
+        }
     }
 
     fun onPdfPicked(uri: Uri) {
+        persistReadPermission(uri)
         val displayName = getPdfDisplayName(uri)
         val cachedPassword = passwordCache.get(uri.toString())
         startExtraction(uri, displayName, cachedPassword)
+    }
+
+    fun onDocumentsPicked(uris: List<Uri>) {
+        val candidateUris = uris.distinctBy { it.toString() }
+        if (candidateUris.isEmpty()) return
+        candidateUris.forEach(::persistReadPermission)
+        extractionJob?.cancel()
+        _state.value = PdfExtractorUiState.Loading(
+            progress = 0f,
+            currentDocument = 1,
+            totalDocuments = candidateUris.size,
+        )
+        extractionJob = viewModelScope.launch {
+            cacheReady.await()
+            val distinctUris = candidateUris.filterNot { cache.get(it.toString()) != null }
+            if (distinctUris.isEmpty()) {
+                _state.value = PdfExtractorUiState.Idle
+                return@launch
+            }
+
+            distinctUris.forEachIndexed { index, uri ->
+                val displayName = getPdfDisplayName(uri)
+                val password = passwordCache.get(uri.toString())
+                repository.addBook(uri, password).collect { asyncState ->
+                    when (asyncState) {
+                        is AsyncState.Loading -> {
+                            val batchProgress = (index + asyncState.progress) / distinctUris.size
+                            _state.value = PdfExtractorUiState.Loading(
+                                progress = batchProgress,
+                                currentPage = asyncState.currentPage,
+                                totalPages = asyncState.totalPages,
+                                currentDocument = index + 1,
+                                totalDocuments = distinctUris.size,
+                            )
+                        }
+                        is AsyncState.Success -> {
+                            password?.let { passwordCache.put(uri.toString(), it) }
+                            _state.value = PdfExtractorUiState.Success(asyncState.data)
+                            refreshLibrary()
+                        }
+                        is AsyncState.PasswordProtected -> {
+                            _state.value = PdfExtractorUiState.Error(
+                                "${displayName ?: "A book"} is password protected; open it separately to enter the password."
+                            )
+                        }
+                        is AsyncState.Error -> {
+                            _state.value = PdfExtractorUiState.Error(
+                                "${displayName ?: uri.lastPathSegment}: ${asyncState.message}"
+                            )
+                        }
+                        is AsyncState.Idle -> Unit
+                    }
+                }
+            }
+            refreshLibrary()
+            _state.value = PdfExtractorUiState.Idle
+        }
     }
 
     private fun startExtraction(
@@ -77,12 +155,17 @@ class PdfExtractorViewModel(application: Application) : AndroidViewModel(applica
         password: String?,
     ) {
         extractionJob?.cancel()
-        _state.value = PdfExtractorUiState.Loading(0f)
+        _state.value = PdfExtractorUiState.Loading(progress = 0f)
         extractionJob = viewModelScope.launch {
+            cacheReady.await()
             repository.addBook(uri, password).collect { asyncState ->
                 when (asyncState) {
                     is AsyncState.Loading -> {
-                        _state.value = PdfExtractorUiState.Loading(asyncState.progress)
+                        _state.value = PdfExtractorUiState.Loading(
+                            progress = asyncState.progress,
+                            currentPage = asyncState.currentPage,
+                            totalPages = asyncState.totalPages,
+                        )
                     }
                     is AsyncState.Success -> {
                         password?.let { passwordCache.put(uri.toString(), it) }
@@ -166,5 +249,15 @@ class PdfExtractorViewModel(application: Application) : AndroidViewModel(applica
             }
         }
         return name
+    }
+
+    private fun persistReadPermission(uri: Uri) {
+        if (uri.scheme != "content") return
+        runCatching {
+            getApplication<Application>().contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
     }
 }

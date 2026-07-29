@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.readproplus.ui.theme.ReaderColorScheme
+import kotlin.math.roundToInt
 
 @Composable
 fun PdfLoadingIndicator(
@@ -22,10 +23,12 @@ fun PdfLoadingIndicator(
     totalPages: Int,
     progress: Float,
     scheme: ReaderColorScheme,
+    currentDocument: Int = 1,
+    totalDocuments: Int = 1,
     modifier: Modifier = Modifier,
 ) {
     val animatedProgress by animateFloatAsState(
-        targetValue = progress,
+        targetValue = progress.coerceIn(0f, 1f),
         label = "progress",
     )
 
@@ -49,9 +52,24 @@ fun PdfLoadingIndicator(
         )
         Spacer(Modifier.height(4.dp))
         Text(
-            text = "Page $currentPage of $totalPages",
+            text = when {
+                totalPages > 0 && currentPage > 0 ->
+                    "Page $currentPage of $totalPages  •  ${(animatedProgress * 100).roundToInt()}%"
+                totalPages > 0 ->
+                    "Preparing PDF  •  $totalPages pages"
+                else ->
+                    "Preparing PDF...  •  ${(animatedProgress * 100).roundToInt()}%"
+            },
             style = MaterialTheme.typography.bodySmall,
             color = scheme.pageNumberColor,
         )
+        if (totalDocuments > 1) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Document $currentDocument of $totalDocuments",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.pageNumberColor,
+            )
+        }
     }
 }

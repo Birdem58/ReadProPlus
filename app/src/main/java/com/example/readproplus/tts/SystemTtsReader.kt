@@ -33,25 +33,23 @@ class SystemTtsReader(context: Context) {
     suspend fun startReading(
         pages: List<String>,
         startPageIndex: Int,
-        targetMinutes: Int,
+        endPageIndex: Int,
     ): Result<Unit> {
         val initResult = ensureInitialized()
         if (initResult.isFailure) return initResult
 
-        val sourceSentences = pages
-            .drop(startPageIndex.coerceIn(0, pages.lastIndex.coerceAtLeast(0)))
+        val sourcePages = pages.ifEmpty { listOf("No readable text is available.") }
+        val startIndex = startPageIndex.coerceIn(0, sourcePages.lastIndex)
+        val endIndex = endPageIndex.coerceIn(startIndex, sourcePages.lastIndex)
+        val sourceSentences = sourcePages
+            .subList(startIndex, endIndex + 1)
             .flatMap(::splitSentences)
             .ifEmpty { listOf("No readable text is available.") }
 
-        val targetDurationMs = targetMinutes.coerceAtLeast(1) * MILLIS_PER_MINUTE
-        val selected = mutableListOf<Utterance>()
-        var estimatedDuration = 0L
-        sourceSentences.forEach { sentence ->
-            if (estimatedDuration >= targetDurationMs && selected.isNotEmpty()) return@forEach
-            val duration = estimateDurationMs(sentence)
-            selected += Utterance(sentence, duration)
-            estimatedDuration += duration
+        val selected = sourceSentences.map { sentence ->
+            Utterance(sentence, estimateDurationMs(sentence))
         }
+        val estimatedDuration = selected.sumOf(Utterance::estimatedDurationMs)
         utterances = selected
         activeIndex = 0
         _state.value = TtsState.Generating(0L, estimatedDuration, 0f)

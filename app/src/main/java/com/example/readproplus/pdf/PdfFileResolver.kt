@@ -3,6 +3,7 @@ package com.example.readproplus.pdf
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import android.provider.OpenableColumns
 import java.io.FileNotFoundException
 
 class PdfFileResolver(private val context: Context) {
@@ -20,6 +21,18 @@ class PdfFileResolver(private val context: Context) {
         }
         return fd
     }
+
+    fun getDisplayName(uri: Uri): String? = runCatching {
+        context.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }.getOrNull()
 }
 
 class PdfFileTooLargeException(val maxBytes: Long) :

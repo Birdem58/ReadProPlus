@@ -2,6 +2,7 @@ package com.example.readproplus.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
@@ -50,9 +53,12 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -79,8 +85,11 @@ import androidx.compose.ui.unit.sp
 import com.example.readproplus.model.BookCollection
 import com.example.readproplus.model.BookFolder
 import com.example.readproplus.model.ReaderProgress
+import com.example.readproplus.model.ReadingMode
+import com.example.readproplus.model.ScrollMode
 import com.example.readproplus.model.SidebarSection
 import com.example.readproplus.model.pdf.PdfDocument
+import com.example.readproplus.ui.components.DocumentCover
 import com.example.readproplus.ui.theme.ReaderColorScheme
 
 private val bookColors = listOf(
@@ -103,6 +112,7 @@ fun ReadingNowScreen(
     scheme: ReaderColorScheme,
     onBookClick: (PdfDocument) -> Unit,
     onRemoveProgress: (String) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -112,6 +122,11 @@ fun ReadingNowScreen(
                         Icon(Icons.Default.AutoStories, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.READING_NOW.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.surfaceColor),
@@ -209,6 +224,7 @@ fun BooksAndDocumentsScreen(
     books: List<PdfDocument>,
     scheme: ReaderColorScheme,
     onBookClick: (PdfDocument) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -218,6 +234,11 @@ fun BooksAndDocumentsScreen(
                         Icon(Icons.AutoMirrored.Filled.LibraryBooks, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.BOOKS_AND_DOCUMENTS.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.surfaceColor),
@@ -258,10 +279,17 @@ private fun BookCard(
     ) {
         Column {
             Box(
-                modifier = Modifier.fillMaxWidth().aspectRatio(0.7f).clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)).background(color.copy(alpha = 0.3f)),
-                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(0.7f)
+                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)),
             ) {
-                Text(document.title.take(1), fontSize = 48.sp, fontWeight = FontWeight.Bold, color = color)
+                DocumentCover(
+                    document = document,
+                    scheme = scheme,
+                    modifier = Modifier.fillMaxSize(),
+                    maxWidthPx = 640,
+                )
             }
             Column(modifier = Modifier.padding(12.dp)) {
                 Text(document.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, color = scheme.textColor, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -286,6 +314,7 @@ fun FavoritesScreen(
     scheme: ReaderColorScheme,
     onBookClick: (PdfDocument) -> Unit,
     onToggleFavorite: (String) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     val favBooks = books.filter { it.id in favorites }
     Scaffold(
@@ -296,6 +325,11 @@ fun FavoritesScreen(
                         Icon(Icons.Default.Favorite, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.FAVORITES.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.surfaceColor),
@@ -329,6 +363,7 @@ fun ToReadScreen(
     scheme: ReaderColorScheme,
     onBookClick: (PdfDocument) -> Unit,
     onToggleToRead: (String) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     val toReadBooks = books.filter { it.id in toRead }
     Scaffold(
@@ -339,6 +374,11 @@ fun ToReadScreen(
                         Icon(Icons.AutoMirrored.Filled.PlaylistAddCheck, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.TO_READ.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.surfaceColor),
@@ -371,6 +411,7 @@ fun HaveReadScreen(
     haveRead: Set<String>,
     scheme: ReaderColorScheme,
     onBookClick: (PdfDocument) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     val readBooks = books.filter { it.id in haveRead }
     Scaffold(
@@ -381,6 +422,11 @@ fun HaveReadScreen(
                         Icon(Icons.AutoMirrored.Filled.MenuBook, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.HAVE_READ.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.surfaceColor),
@@ -412,6 +458,7 @@ fun AuthorsScreen(
     authors: Map<String, List<PdfDocument>>,
     scheme: ReaderColorScheme,
     onBookClick: (PdfDocument) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -421,6 +468,11 @@ fun AuthorsScreen(
                         Icon(Icons.Default.People, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.AUTHORS.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.surfaceColor),
@@ -469,6 +521,7 @@ fun SeriesScreen(
     seriesMap: Map<String, List<PdfDocument>>,
     scheme: ReaderColorScheme,
     onBookClick: (PdfDocument) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -478,6 +531,11 @@ fun SeriesScreen(
                         Icon(Icons.Default.CollectionsBookmark, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.SERIES.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.surfaceColor),
@@ -529,6 +587,7 @@ fun CollectionsScreen(
     onBookClick: (PdfDocument) -> Unit,
     onCreateCollection: (String) -> Unit,
     onDeleteCollection: (String) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     var showDialog by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
@@ -564,6 +623,11 @@ fun CollectionsScreen(
                         Icon(Icons.Default.BookmarkBorder, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.COLLECTIONS.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 actions = {
@@ -632,6 +696,7 @@ fun FoldersScreen(
     onBookClick: (PdfDocument) -> Unit,
     onCreateFolder: (String) -> Unit,
     onDeleteFolder: (String) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     var showDialog by remember { mutableStateOf(false) }
     var newName by remember { mutableStateOf("") }
@@ -667,6 +732,11 @@ fun FoldersScreen(
                         Icon(Icons.Default.Folder, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.FOLDERS.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 actions = {
@@ -732,6 +802,7 @@ fun DownloadsScreen(
     books: List<PdfDocument>,
     scheme: ReaderColorScheme,
     onBookClick: (PdfDocument) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -741,6 +812,11 @@ fun DownloadsScreen(
                         Icon(Icons.Default.Download, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.DOWNLOADS.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.surfaceColor),
@@ -774,6 +850,7 @@ fun TrashScreen(
     onBookClick: (PdfDocument) -> Unit,
     onRestore: (String) -> Unit,
     onEmptyTrash: () -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -783,6 +860,11 @@ fun TrashScreen(
                         Icon(Icons.Default.Delete, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.TRASH.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 actions = {
@@ -836,6 +918,11 @@ fun TrashScreen(
 @Composable
 fun SettingsScreen(
     scheme: ReaderColorScheme,
+    readingMode: ReadingMode,
+    onReadingModeChange: (ReadingMode) -> Unit,
+    scrollMode: ScrollMode,
+    onScrollModeChange: (ScrollMode) -> Unit,
+    onMenuClick: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -845,6 +932,11 @@ fun SettingsScreen(
                         Icon(Icons.Default.Settings, null, tint = scheme.accentColor, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(SidebarSection.SETTINGS.label, fontWeight = FontWeight.Bold, color = scheme.navigationContent)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(Icons.Default.Menu, "Menu", tint = scheme.navigationContent)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.surfaceColor),
@@ -859,9 +951,16 @@ fun SettingsScreen(
             item {
                 SettingsSection("Reading", listOf(
                     "Default Font Size" to "Adjust reading text size",
-                    "Scroll Mode" to "Paged / Vertical scrolling",
-                    "Reading Mode" to "Light / Dark / Sepia / etc.",
                 ), scheme)
+            }
+            item {
+                ReaderPreferencesSection(
+                    scheme = scheme,
+                    scrollMode = scrollMode,
+                    onScrollModeChange = onScrollModeChange,
+                    readingMode = readingMode,
+                    onReadingModeChange = onReadingModeChange,
+                )
             }
             item {
                 SettingsSection("TTS (Text-to-Speech)", listOf(
@@ -888,6 +987,75 @@ fun SettingsScreen(
                     "Version" to "1.0.3",
                     "License" to "MIT License",
                 ), scheme)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderPreferencesSection(
+    scheme: ReaderColorScheme,
+    scrollMode: ScrollMode,
+    onScrollModeChange: (ScrollMode) -> Unit,
+    readingMode: ReadingMode,
+    onReadingModeChange: (ReadingMode) -> Unit,
+) {
+    Column {
+        Text(
+            text = "Reader View",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = scheme.accentColor,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = scheme.surfaceColor),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Scroll Mode", color = scheme.textColor, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    ScrollMode.values().forEach { mode ->
+                        FilterChip(
+                            selected = scrollMode == mode,
+                            onClick = { onScrollModeChange(mode) },
+                            label = { Text(mode.label) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = scheme.accentColor,
+                                selectedLabelColor = scheme.background,
+                            ),
+                        )
+                    }
+                }
+
+                HorizontalDivider(color = scheme.dividerColor, modifier = Modifier.padding(vertical = 8.dp))
+
+                Text("Reading Theme", color = scheme.textColor, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    ReadingMode.values().forEach { mode ->
+                        FilterChip(
+                            selected = readingMode == mode,
+                            onClick = { onReadingModeChange(mode) },
+                            label = { Text(mode.label) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = scheme.accentColor,
+                                selectedLabelColor = scheme.background,
+                            ),
+                        )
+                    }
+                }
             }
         }
     }

@@ -1,5 +1,6 @@
 package com.example.readproplus.ui.components
 
+import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -30,8 +31,10 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.readproplus.model.tts.TtsState
+import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -63,6 +67,20 @@ fun TtsControlBar(
     modifier: Modifier = Modifier,
 ) {
     val isVisible = ttsState !is TtsState.Idle && ttsState !is TtsState.Stopped
+    var generationStartedAtMs by remember { mutableLongStateOf(0L) }
+    var generationNowMs by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+
+    LaunchedEffect(ttsState is TtsState.Generating) {
+        if (ttsState is TtsState.Generating) {
+            generationStartedAtMs = SystemClock.elapsedRealtime()
+            while (true) {
+                generationNowMs = SystemClock.elapsedRealtime()
+                delay(1_000L)
+            }
+        } else {
+            generationStartedAtMs = 0L
+        }
+    }
 
     AnimatedVisibility(
         visible = isVisible,
@@ -79,6 +97,11 @@ fun TtsControlBar(
         ) {
             when (ttsState) {
                 is TtsState.Generating -> {
+                    val elapsedMs = (generationNowMs - generationStartedAtMs).coerceAtLeast(0L)
+                    val estimatedRemainingMs = estimateGenerationRemainingMs(
+                        progress = ttsState.progress,
+                        elapsedMs = elapsedMs,
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -97,6 +120,12 @@ fun TtsControlBar(
                             fontWeight = FontWeight.Bold,
                         )
                     }
+                    Text(
+                        text = estimatedRemainingMs?.let { "About ${formatTime(it)} remaining" }
+                            ?: "Estimating time remaining...",
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 12.sp,
+                    )
                     Spacer(Modifier.height(6.dp))
                     LinearProgressIndicator(
                         progress = { ttsState.progress.coerceIn(0f, 1f) },
@@ -293,6 +322,12 @@ private fun formatTime(ms: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return String.format(Locale.US, "%02d:%02d", minutes, seconds)
+}
+
+private fun estimateGenerationRemainingMs(progress: Float, elapsedMs: Long): Long? {
+    if (progress <= 0.01f || elapsedMs <= 0L) return null
+    val estimatedTotalMs = (elapsedMs / progress).toLong()
+    return (estimatedTotalMs - elapsedMs).coerceAtLeast(0L)
 }
 
 private fun formatSpeed(speed: Float): String {

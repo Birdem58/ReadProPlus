@@ -16,7 +16,6 @@ import com.example.readproplus.model.tts.AudioSegment
 import com.example.readproplus.model.tts.TtsConfig
 import com.example.readproplus.model.tts.TtsVoice
 import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 
 sealed interface EngineState {
     data object Idle : EngineState
@@ -66,10 +65,11 @@ class KokoroEngine(
         inference.loadModel(modelPath, voiceEmbedding)
     }
 
-    suspend fun startSpeakingDuration(
+    suspend fun startSpeakingRange(
         pages: List<String>,
         startPageIndex: Int,
-        targetMinutes: Int,
+        endPageIndex: Int,
+        onAudioReady: suspend (samples: ShortArray, durationMs: Long) -> Unit = { _, _ -> },
     ) = coroutineScope {
         check(isReady()) { "Model not loaded. Call loadModel() first." }
         require(voiceEmbedding.isNotEmpty()) { "Voice not initialized" }
@@ -80,15 +80,13 @@ class KokoroEngine(
         audioPlayer.stop()
         audioPlayer.resetBuffer()
 
-        val targetMs = targetMinutes * 60 * 1000L
-        val playbackSpeed = config.speed
-        _engineState.value = EngineState.Generating(0L, targetMs)
-
-        val startIndex = startPageIndex.coerceIn(0, (pages.size - 1).coerceAtLeast(0))
+        val sourcePages = pages.ifEmpty { listOf("No text available to generate speech.") }
+        val startIndex = startPageIndex.coerceIn(0, sourcePages.lastIndex)
+        val endIndex = endPageIndex.coerceIn(startIndex, sourcePages.lastIndex)
+        val targetPageTexts = sourcePages.subList(startIndex, endIndex + 1)
         val sentencesToGenerate = mutableListOf<String>()
 
-        for (i in startIndex until pages.size) {
-            val pageText = pages[i]
+        for (pageText in targetPageTexts) {
             val sList = splitSentences(pageText)
             sentencesToGenerate.addAll(sList)
         }
@@ -96,6 +94,11 @@ class KokoroEngine(
         if (sentencesToGenerate.isEmpty()) {
             sentencesToGenerate.add("No text available to generate speech.")
         }
+
+        val targetMs = targetPageTexts.sumOf { page ->
+            page.split(Regex("\\s+")).count { it.isNotBlank() }.coerceAtLeast(1) * 60_000L / 165L
+        }.coerceAtLeast(1L)
+        _engineState.value = EngineState.Generating(0L, targetMs)
 
         var accumulatedSourceMs = 0L
 
@@ -106,13 +109,10 @@ class KokoroEngine(
                 val segment = generateAudioSegment(sentence)
                 audioPlayer.appendSamples(segment.samples)
                 accumulatedSourceMs += segment.durationMs
-                val accumulatedPlaybackMs = (accumulatedSourceMs / playbackSpeed).roundToLong()
+                val accumulatedPlaybackMs = audioPlayer.getTotalDurationMs()
 
                 _engineState.value = EngineState.Generating(accumulatedPlaybackMs, targetMs)
 
-                if (accumulatedPlaybackMs >= targetMs) {
-                    break
-                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -126,6 +126,12 @@ class KokoroEngine(
 
         ensureActive()
 
+        runCatching {
+            onAudioReady(audioPlayer.snapshotSamples(), audioPlayer.getTotalDurationMs())
+        }.onFailure { error ->
+            Log.w(TAG, "Could not save generated audio", error)
+        }
+
         _engineState.value = EngineState.Playing(0L, audioPlayer.getTotalDurationMs(), 0f)
         val playbackJob = launch {
             audioPlayer.play()
@@ -135,7 +141,24 @@ class KokoroEngine(
     }
 
     suspend fun startSpeaking(text: String) = coroutineScope {
-        startSpeakingDuration(listOf(text), 0, 1)
+        startSpeakingRange(listOf(text), 0, 0)
+    }
+
+    suspend fun playSamples(samples: ShortArray) = coroutineScope {
+        require(samples.isNotEmpty()) { "Cannot play empty audio." }
+        currentJob?.cancel()
+        currentJob = coroutineContext[Job]
+
+        audioPlayer.stop()
+        audioPlayer.resetBuffer()
+        audioPlayer.appendSamples(samples)
+        ensureActive()
+
+        _engineState.value = EngineState.Playing(0L, audioPlayer.getTotalDurationMs(), 0f)
+        val playbackJob = launch {
+            audioPlayer.play()
+        }
+        observePlaybackLoop(playbackJob)
     }
 
     private suspend fun observePlaybackLoop(playbackJob: Job) = coroutineScope {

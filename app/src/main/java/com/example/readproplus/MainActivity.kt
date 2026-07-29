@@ -11,8 +11,11 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -20,12 +23,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.readproplus.model.ReadingMode
 import com.example.readproplus.model.ScrollMode
 import com.example.readproplus.model.SidebarSection
 import com.example.readproplus.model.pdf.PdfDocument
+import com.example.readproplus.data.ReaderSettingsRepository
+import com.example.readproplus.data.ReadingStatsRepository
+import com.example.readproplus.model.ReaderSettings
 import com.example.readproplus.model.tts.TtsState
 import com.example.readproplus.model.tts.TtsVoice
 import com.example.readproplus.ui.components.AppSidebar
@@ -57,15 +67,58 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val viewModel: PdfExtractorViewModel = viewModel()
-            val ttsViewModel: KokoroTtsViewModel = viewModel()
-            val sidebarViewModel: SidebarViewModel = viewModel()
+            var showMainContent by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                // Commit a lightweight visible frame before constructing the
+                // library/reader tree and its optional native dependencies.
+                withFrameNanos { }
+                showMainContent = true
+            }
 
-            var readingMode by remember { mutableStateOf(ReadingMode.SEPIA) }
-            var scrollMode by remember { mutableStateOf(ScrollMode.PAGED) }
+            if (!showMainContent) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFFFBF0D9)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    androidx.compose.material3.Text(
+                        text = "Loading library...",
+                        color = Color(0xFF3E2C1A),
+                    )
+                }
+            } else {
+            val viewModel: PdfExtractorViewModel = viewModel()
+            val sidebarViewModel: SidebarViewModel = viewModel()
+            val context = LocalContext.current
+            val readerSettingsRepository = remember { ReaderSettingsRepository(context) }
+            val readingStatsRepository = remember { ReadingStatsRepository(context) }
+
+            val storedReaderSettings = remember { readerSettingsRepository.getSettings() }
+            var readerSettings by remember { mutableStateOf(storedReaderSettings) }
+            var readingMode by remember {
+                mutableStateOf(
+                    ReadingMode.values().firstOrNull { it.name == storedReaderSettings.readingMode }
+                        ?: ReadingMode.SEPIA,
+                )
+            }
+            var scrollMode by remember {
+                mutableStateOf(
+                    ScrollMode.values().firstOrNull { it.name == storedReaderSettings.scrollMode }
+                        ?: ScrollMode.PAGED,
+                )
+            }
             var currentScreen by remember { mutableStateOf<Screen>(Screen.Library) }
             var currentPage by remember { mutableIntStateOf(1) }
             var sidebarSection by remember { mutableStateOf(SidebarSection.BOOKS_AND_DOCUMENTS) }
+            // TTS initializes optional ONNX/audio dependencies. Do not create
+            // it while the library is opening; the library must get its first
+            // frame without waiting for the reader backend.
+            val ttsViewModel: KokoroTtsViewModel? = if (currentScreen is Screen.Reader) {
+                viewModel()
+            } else {
+                null
+            }
             val scheme = readerColorScheme(readingMode)
             val drawerState = rememberDrawerState(DrawerValue.Closed)
             val scope = rememberCoroutineScope()
@@ -73,12 +126,16 @@ class MainActivity : ComponentActivity() {
             val selectedDocument by viewModel.selectedDocument.collectAsState()
             val allHighlights by viewModel.highlights.collectAsState()
             val libraryBooks by viewModel.libraryBooks.collectAsState()
-            val ttsState by ttsViewModel.ttsState.collectAsState()
-            val downloadProgress by ttsViewModel.downloadProgress.collectAsState()
-            val ttsVolume by ttsViewModel.volume.collectAsState()
-            val selectedTtsVoice by ttsViewModel.selectedVoice.collectAsState()
-            val voiceAvailability by ttsViewModel.voiceAvailability.collectAsState()
-            val voiceDownloadProgress by ttsViewModel.voiceDownloadProgress.collectAsState()
+            val ttsState = ttsViewModel?.ttsState?.collectAsState()?.value ?: TtsState.Idle
+            val ttsVolume = ttsViewModel?.volume?.collectAsState()?.value ?: 1f
+            val generatedAudios = ttsViewModel?.generatedAudios?.collectAsState()?.value ?: emptyList()
+            val selectedTtsVoice = ttsViewModel?.selectedVoice?.collectAsState()?.value ?: TtsVoice.NICOLE
+            val voiceAvailability = ttsViewModel?.voiceAvailability?.collectAsState()?.value ?: emptyMap()
+            val voiceDownloadProgress = ttsViewModel?.voiceDownloadProgress?.collectAsState()?.value
+
+            LaunchedEffect(selectedDocument?.id, ttsViewModel) {
+                ttsViewModel?.loadGeneratedAudios(selectedDocument?.id)
+            }
 
             val readingProgress by sidebarViewModel.readingProgress.collectAsState()
             val favorites by sidebarViewModel.favorites.collectAsState()
@@ -112,7 +169,15 @@ class MainActivity : ComponentActivity() {
                 sidebarSection = SidebarSection.BOOKS_AND_DOCUMENTS
             }
 
-            ReadProPlusTheme {
+            DisposableEffect(selectedDocument?.id) {
+                selectedDocument?.let { readingStatsRepository.startSession(it.id) }
+                onDispose { readingStatsRepository.finishSession() }
+            }
+
+            ReadProPlusTheme(
+                darkTheme = readingMode in setOf(ReadingMode.DARK, ReadingMode.OLED_DARK, ReadingMode.NIGHT_BLUE) ||
+                    isSystemInDarkTheme(),
+            ) {
                 ModalNavigationDrawer(
                     drawerState = drawerState,
                     drawerContent = {
@@ -121,7 +186,14 @@ class MainActivity : ComponentActivity() {
                                 currentSection = sidebarSection,
                                 onSectionSelected = { section ->
                                     sidebarSection = section
-                                    currentScreen = Screen.SidebarScreen(section)
+                                    currentScreen = if (section == SidebarSection.BOOKS_AND_DOCUMENTS) {
+                                        // Books and Documents is the library entry point. Keep it on the
+                                        // same screen as the home page so the layout and view modes cannot
+                                        // drift apart between the two navigation paths.
+                                        Screen.Library
+                                    } else {
+                                        Screen.SidebarScreen(section)
+                                    }
                                     scope.launch { drawerState.close() }
                                 },
                                 scheme = scheme,
@@ -141,15 +213,36 @@ class MainActivity : ComponentActivity() {
                                     viewModel = viewModel,
                                     onBookClick = { navigateToBook(it) },
                                     onMenuClick = { scope.launch { drawerState.open() } },
+                                    favorites = favorites,
+                                    toRead = toRead,
+                                    haveRead = haveRead,
+                                    onToggleFavorite = { sidebarViewModel.toggleFavorite(it) },
+                                    onToggleToRead = { sidebarViewModel.toggleToRead(it) },
+                                    onToggleHaveRead = { sidebarViewModel.toggleHaveRead(it) },
                                 )
                             }
                             is Screen.Reader -> {
                                 ReaderScreen(
                                     document = selectedDocument,
                                     readingMode = readingMode,
-                                    onReadingModeChange = { readingMode = it },
+                                    initialReaderSettings = readerSettings,
+                                    onReaderSettingsChanged = {
+                                        readerSettings = it
+                                        readerSettingsRepository.saveSettings(it)
+                                    },
                                     scrollMode = scrollMode,
-                                    onScrollModeChange = { scrollMode = it },
+                                    onScrollModeChange = { mode ->
+                                        scrollMode = mode
+                                        val updated = readerSettings.copy(scrollMode = mode.name)
+                                        readerSettings = updated
+                                        readerSettingsRepository.saveSettings(updated)
+                                    },
+                                    onReadingModeChange = { mode ->
+                                        readingMode = mode
+                                        val updated = readerSettings.copy(readingMode = mode.name)
+                                        readerSettings = updated
+                                        readerSettingsRepository.saveSettings(updated)
+                                    },
                                     onBackClick = { returnToPreviousScreen() },
                                     onHighlightToggle = { bookId, bookTitle, pageNumber, text, color ->
                                         viewModel.toggleHighlight(bookId, bookTitle, pageNumber, text, color)
@@ -158,39 +251,46 @@ class MainActivity : ComponentActivity() {
                                     onCitationsClick = {
                                         currentScreen = Screen.Citations
                                     },
-                                    pageHighlights = pageHighlights,
-                                    ttsState = ttsState,
-                                    ttsVolume = ttsVolume,
+                                     pageHighlights = pageHighlights,
+                                     ttsState = ttsState,
+                                     ttsVolume = ttsVolume,
+                                     generatedAudios = generatedAudios,
                                     ttsVoices = TtsVoice.ALL,
                                     selectedTtsVoice = selectedTtsVoice,
                                     voiceAvailability = voiceAvailability,
-                                    voiceDownloadProgress = voiceDownloadProgress,
-                                    onTtsStart = { text ->
-                                        ttsViewModel.startReadingOrInitialize(text)
-                                    },
-                                    onTtsDurationStart = { startPageIndex, minutes, mainTextOnly ->
-                                        val pages = selectedDocument?.pages ?: emptyList()
-                                        ttsViewModel.startDurationReadingOrInitialize(
-                                            pages = pages,
-                                            startPageIndex = startPageIndex,
-                                            targetMinutes = minutes,
-                                            mainTextOnly = mainTextOnly,
-                                        )
-                                    },
-                                    onTtsPause = { ttsViewModel.pauseReading() },
-                                    onTtsResume = { ttsViewModel.resumeReading() },
-                                    onTtsStop = { ttsViewModel.stopReading() },
-                                    onTtsSeek = { progress -> ttsViewModel.seekTo(progress) },
-                                    onTtsSpeedClick = { },
-                                    onTtsDismiss = { ttsViewModel.stopReading() },
-                                    onTtsSpeedSelected = { speed -> ttsViewModel.setSpeed(speed) },
-                                    onTtsVolumeChanged = { volume -> ttsViewModel.setVolume(volume) },
-                                    onTtsVoiceSelected = { voice -> ttsViewModel.selectVoice(voice) },
+                                     voiceDownloadProgress = voiceDownloadProgress,
+                                     onTtsStart = { text ->
+                                         ttsViewModel?.startReadingOrInitialize(text)
+                                     },
+                                     onTtsPageRangeStart = { startPage, endPage, mainTextOnly ->
+                                         selectedDocument?.let { document ->
+                                              ttsViewModel?.startPageRangeReading(
+                                                 bookId = document.id,
+                                                 bookTitle = document.title,
+                                                 pages = document.pages,
+                                                 startPage = startPage,
+                                                 endPage = endPage,
+                                                 mainTextOnly = mainTextOnly,
+                                             )
+                                         }
+                                     },
+                                      onGeneratedAudioPlay = { audio -> ttsViewModel?.playGeneratedAudio(audio) },
+                                      onGeneratedAudioDelete = { audio -> ttsViewModel?.deleteGeneratedAudio(audio) },
+                                     onTtsPause = { ttsViewModel?.pauseReading() },
+                                     onTtsResume = { ttsViewModel?.resumeReading() },
+                                     onTtsStop = { ttsViewModel?.stopReading() },
+                                     onTtsSeek = { progress -> ttsViewModel?.seekTo(progress) },
+                                     onTtsSpeedClick = { },
+                                     onTtsDismiss = { ttsViewModel?.stopReading() },
+                                     onTtsSpeedSelected = { speed -> ttsViewModel?.setSpeed(speed) },
+                                     onTtsVolumeChanged = { volume -> ttsViewModel?.setVolume(volume) },
+                                     onTtsVoiceSelected = { voice -> ttsViewModel?.selectVoice(voice) },
                                 )
                                 if (selectedDocument != null) {
-                                    androidx.compose.runtime.LaunchedEffect(currentPage) {
+                                    androidx.compose.runtime.LaunchedEffect(currentPage, selectedDocument?.id) {
                                         val doc = selectedDocument ?: return@LaunchedEffect
                                         sidebarViewModel.saveProgress(doc.id, doc.title, currentPage, doc.totalPages)
+                                        readingStatsRepository.recordPageRead(doc.id, currentPage, doc.totalPages)
                                     }
                                 }
                             }
@@ -234,6 +334,20 @@ class MainActivity : ComponentActivity() {
                                     trash = trash,
                                     scheme = scheme,
                                     sidebarViewModel = sidebarViewModel,
+                                    readingMode = readingMode,
+                                    onReadingModeChange = { mode ->
+                                        readingMode = mode
+                                        val updated = readerSettings.copy(readingMode = mode.name)
+                                        readerSettings = updated
+                                        readerSettingsRepository.saveSettings(updated)
+                                    },
+                                    scrollMode = scrollMode,
+                                    onScrollModeChange = { mode ->
+                                        scrollMode = mode
+                                        val updated = readerSettings.copy(scrollMode = mode.name)
+                                        readerSettings = updated
+                                        readerSettingsRepository.saveSettings(updated)
+                                    },
                                     onBookClick = { navigateToBook(it) },
                                     onMenuClick = { scope.launch { drawerState.open() } },
                                 )
@@ -246,11 +360,12 @@ class MainActivity : ComponentActivity() {
                                 progress = ds.progress,
                                 bytesDownloaded = ds.bytesDownloaded,
                                 totalBytes = ds.totalBytes,
-                                onCancel = { ttsViewModel.cancelDownload() },
+                                 onCancel = { ttsViewModel?.cancelDownload() },
                             )
                         }
                     }
                 }
+            }
             }
         }
     }
@@ -277,6 +392,10 @@ private fun SidebarSectionContent(
     trash: Set<String>,
     scheme: com.example.readproplus.ui.theme.ReaderColorScheme,
     sidebarViewModel: SidebarViewModel,
+    readingMode: ReadingMode,
+    onReadingModeChange: (ReadingMode) -> Unit,
+    scrollMode: ScrollMode,
+    onScrollModeChange: (ScrollMode) -> Unit,
     onBookClick: (PdfDocument) -> Unit,
     onMenuClick: () -> Unit,
 ) {
@@ -288,6 +407,7 @@ private fun SidebarSectionContent(
                 scheme = scheme,
                 onBookClick = onBookClick,
                 onRemoveProgress = { sidebarViewModel.removeProgress(it) },
+                onMenuClick = onMenuClick,
             )
         }
         SidebarSection.BOOKS_AND_DOCUMENTS -> {
@@ -295,6 +415,7 @@ private fun SidebarSectionContent(
                 books = activeBooks,
                 scheme = scheme,
                 onBookClick = onBookClick,
+                onMenuClick = onMenuClick,
             )
         }
         SidebarSection.FAVORITES -> {
@@ -304,6 +425,7 @@ private fun SidebarSectionContent(
                 scheme = scheme,
                 onBookClick = onBookClick,
                 onToggleFavorite = { sidebarViewModel.toggleFavorite(it) },
+                onMenuClick = onMenuClick,
             )
         }
         SidebarSection.TO_READ -> {
@@ -313,6 +435,7 @@ private fun SidebarSectionContent(
                 scheme = scheme,
                 onBookClick = onBookClick,
                 onToggleToRead = { sidebarViewModel.toggleToRead(it) },
+                onMenuClick = onMenuClick,
             )
         }
         SidebarSection.HAVE_READ -> {
@@ -321,6 +444,7 @@ private fun SidebarSectionContent(
                 haveRead = haveRead,
                 scheme = scheme,
                 onBookClick = onBookClick,
+                onMenuClick = onMenuClick,
             )
         }
         SidebarSection.AUTHORS -> {
@@ -328,6 +452,7 @@ private fun SidebarSectionContent(
                 authors = sidebarViewModel.getAuthors(activeBooks),
                 scheme = scheme,
                 onBookClick = onBookClick,
+                onMenuClick = onMenuClick,
             )
         }
         SidebarSection.SERIES -> {
@@ -335,6 +460,7 @@ private fun SidebarSectionContent(
                 seriesMap = sidebarViewModel.getSeries(activeBooks),
                 scheme = scheme,
                 onBookClick = onBookClick,
+                onMenuClick = onMenuClick,
             )
         }
         SidebarSection.COLLECTIONS -> {
@@ -345,6 +471,7 @@ private fun SidebarSectionContent(
                 onBookClick = onBookClick,
                 onCreateCollection = { sidebarViewModel.createCollection(it) },
                 onDeleteCollection = { sidebarViewModel.deleteCollection(it) },
+                onMenuClick = onMenuClick,
             )
         }
         SidebarSection.FOLDERS -> {
@@ -355,6 +482,7 @@ private fun SidebarSectionContent(
                 onBookClick = onBookClick,
                 onCreateFolder = { sidebarViewModel.createFolder(it) },
                 onDeleteFolder = { sidebarViewModel.deleteFolder(it) },
+                onMenuClick = onMenuClick,
             )
         }
         SidebarSection.DOWNLOADS -> {
@@ -362,6 +490,29 @@ private fun SidebarSectionContent(
                 books = activeBooks,
                 scheme = scheme,
                 onBookClick = onBookClick,
+                onMenuClick = onMenuClick,
+            )
+        }
+        SidebarSection.READING_STATS -> {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val statsRepo = remember { com.example.readproplus.data.ReadingStatsRepository(context) }
+            val annotationRepo = remember { com.example.readproplus.data.AnnotationRepository(context) }
+            val highlightRepo = remember { com.example.readproplus.data.HighlightRepository(context) }
+            val exporter = remember { com.example.readproplus.data.DataExporter(context) }
+
+            com.example.readproplus.ui.screens.ReadingStatsScreen(
+                stats = statsRepo.getStats(),
+                scheme = scheme,
+                onMenuClick = onMenuClick,
+                onExportClick = {
+                    val markdown = exporter.exportToMarkdown(
+                        highlights = highlightRepo.getAll(),
+                        notes = annotationRepo.getNotes(),
+                        bookmarks = annotationRepo.getBookmarks(),
+                        stats = statsRepo.getStats(),
+                    )
+                    exporter.shareExportData(markdown)
+                },
             )
         }
         SidebarSection.TRASH -> {
@@ -371,11 +522,17 @@ private fun SidebarSectionContent(
                 onBookClick = onBookClick,
                 onRestore = { sidebarViewModel.restoreBook(it) },
                 onEmptyTrash = { sidebarViewModel.emptyTrash() },
+                onMenuClick = onMenuClick,
             )
         }
         SidebarSection.SETTINGS -> {
             SettingsScreen(
                 scheme = scheme,
+                readingMode = readingMode,
+                onReadingModeChange = onReadingModeChange,
+                scrollMode = scrollMode,
+                onScrollModeChange = onScrollModeChange,
+                onMenuClick = onMenuClick,
             )
         }
     }

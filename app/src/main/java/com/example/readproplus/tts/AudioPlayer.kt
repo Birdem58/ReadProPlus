@@ -76,6 +76,17 @@ class AudioPlayer {
         updateProgressFlow()
     }
 
+    @Synchronized
+    fun snapshotSamples(): ShortArray {
+        val result = ShortArray(totalSampleCount.toInt())
+        var offset = 0
+        masterBuffer.forEach { chunk ->
+            chunk.copyInto(result, destinationOffset = offset)
+            offset += chunk.size
+        }
+        return result
+    }
+
     fun getTotalDurationMs(): Long {
         return ((totalSampleCount * 1000.0) / SAMPLE_RATE / appliedPlaybackSpeed).toLong()
     }

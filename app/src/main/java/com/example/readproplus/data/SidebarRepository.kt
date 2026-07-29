@@ -46,8 +46,16 @@ class SidebarRepository(context: Context) {
 
     fun toggleToRead(bookId: String) {
         val set = getToRead().toMutableSet()
-        if (set.contains(bookId)) set.remove(bookId) else set.add(bookId)
-        prefs.edit().putStringSet(KEY_TO_READ, set).apply()
+        if (set.contains(bookId)) {
+            set.remove(bookId)
+            prefs.edit().putStringSet(KEY_TO_READ, set).apply()
+        } else {
+            set.add(bookId)
+            prefs.edit()
+                .putStringSet(KEY_TO_READ, set)
+                .putStringSet(KEY_HAVE_READ, getHaveRead().toMutableSet().apply { remove(bookId) })
+                .apply()
+        }
     }
 
     fun getHaveRead(): Set<String> =
@@ -60,6 +68,16 @@ class SidebarRepository(context: Context) {
         val toRead = getToRead().toMutableSet()
         toRead.remove(bookId)
         prefs.edit().putStringSet(KEY_TO_READ, toRead).apply()
+    }
+
+    fun toggleHaveRead(bookId: String) {
+        if (bookId in getHaveRead()) {
+            prefs.edit()
+                .putStringSet(KEY_HAVE_READ, getHaveRead().toMutableSet().apply { remove(bookId) })
+                .apply()
+        } else {
+            markAsRead(bookId)
+        }
     }
 
     fun getCollections(): List<BookCollection> =

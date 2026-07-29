@@ -1,5 +1,5 @@
 [versions]
-agp = "9.3.0"
+agp = "9.3.1"
 coreKtx = "1.10.1"
 junit = "4.13.2"
 junitVersion = "1.1.5"
@@ -12,6 +12,9 @@ composeBom = "2026.02.01"
 pdfboxAndroid = "2.0.27.0"
 onnxruntime = "1.23.2"
 datastorePreferences = "1.1.1"
+junrar = "7.5.5"
+libdjvu = "3.5.27-4"
+djvulibre = "0.1.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -34,8 +37,10 @@ pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref
 onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntime" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
 androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleViewmodelCompose" }
+junrar = { group = "com.github.junrar", name = "junrar", version.ref = "junrar" }
+libdjvu = { group = "com.github.axet", name = "libdjvu", version.ref = "libdjvu" }
+djvulibre = { group = "com.github.axet", name = "djvulibre", version.ref = "djvulibre" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-
