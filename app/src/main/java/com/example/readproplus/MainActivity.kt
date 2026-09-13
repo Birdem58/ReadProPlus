@@ -44,6 +44,7 @@ import com.example.readproplus.ui.screens.AuthorsScreen
 import com.example.readproplus.ui.screens.BooksAndDocumentsScreen
 import com.example.readproplus.ui.screens.CitationsScreen
 import com.example.readproplus.ui.screens.CollectionsScreen
+import com.example.readproplus.ui.screens.DesignPlaygroundScreen
 import com.example.readproplus.ui.screens.DownloadsScreen
 import com.example.readproplus.ui.screens.FavoritesScreen
 import com.example.readproplus.ui.screens.FoldersScreen
@@ -109,6 +110,8 @@ class MainActivity : ComponentActivity() {
                         ?: ScrollMode.PAGED,
                 )
             }
+            // Keep the classic UI as the default. The new UI is an explicit mode
+            // so the existing navigation and reader never disappear.
             var currentScreen by remember { mutableStateOf<Screen>(Screen.Library) }
             var currentPage by remember { mutableIntStateOf(1) }
             var sidebarSection by remember { mutableStateOf(SidebarSection.BOOKS_AND_DOCUMENTS) }
@@ -200,6 +203,10 @@ class MainActivity : ComponentActivity() {
                                     scope.launch { drawerState.close() }
                                 },
                                 scheme = scheme,
+                                onNewUiModeClick = {
+                                    currentScreen = Screen.NewUiMode
+                                    scope.launch { drawerState.close() }
+                                },
                             )
                         }
                     },
@@ -210,12 +217,21 @@ class MainActivity : ComponentActivity() {
                             .background(scheme.background),
                     ) {
                         when (val screen = currentScreen) {
+                            is Screen.NewUiMode -> {
+                                DesignPlaygroundScreen(
+                                    onExit = {
+                                        currentScreen = Screen.Library
+                                        sidebarSection = SidebarSection.BOOKS_AND_DOCUMENTS
+                                    },
+                                )
+                            }
                             is Screen.Library -> {
                                 LibraryScreen(
                                     readingMode = readingMode,
                                     viewModel = viewModel,
                                     onBookClick = { navigateToBook(it) },
                                     onMenuClick = { scope.launch { drawerState.open() } },
+                                    onNewUiModeClick = { currentScreen = Screen.NewUiMode },
                                     favorites = favorites,
                                     toRead = toRead,
                                     haveRead = haveRead,
@@ -381,6 +397,7 @@ class MainActivity : ComponentActivity() {
 }
 
 sealed class Screen {
+    data object NewUiMode : Screen()
     data object Library : Screen()
     data object Reader : Screen()
     data object Citations : Screen()

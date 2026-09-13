@@ -157,6 +157,7 @@ fun LibraryScreen(
     viewModel: PdfExtractorViewModel,
     onBookClick: (PdfDocument) -> Unit,
     onMenuClick: () -> Unit = {},
+    onNewUiModeClick: () -> Unit = {},
     favorites: Set<String> = emptySet(),
     toRead: Set<String> = emptySet(),
     haveRead: Set<String> = emptySet(),
@@ -294,6 +295,14 @@ fun LibraryScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onNewUiModeClick) {
+                        Icon(
+                            imageVector = Icons.Default.ViewModule,
+                            contentDescription = "Open new UI mode",
+                            tint = scheme.accentColor,
+                        )
+                    }
+
                     // Find Books Action
                     IconButton(onClick = {
                         scope.launch {

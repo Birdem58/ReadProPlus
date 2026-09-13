@@ -18,6 +18,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +35,7 @@ fun AppSidebar(
     currentSection: SidebarSection,
     onSectionSelected: (SidebarSection) -> Unit,
     scheme: ReaderColorScheme,
+    onNewUiModeClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -75,6 +78,38 @@ fun AppSidebar(
             color = scheme.dividerColor.copy(alpha = 0.5f),
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 2.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(scheme.accentColor.copy(alpha = 0.10f))
+                .clickable(onClick = onNewUiModeClick)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.ViewModule,
+                contentDescription = "Open new UI mode",
+                tint = scheme.accentColor,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(16.dp))
+            Column {
+                Text(
+                    text = "New UI mode",
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.accentColor,
+                    fontSize = 15.sp,
+                )
+                Text(
+                    text = "Try the redesigned flow",
+                    color = scheme.pageNumberColor,
+                    fontSize = 11.sp,
+                )
+            }
+        }
 
         Text(
             text = "v1.0.3",
