@@ -111,6 +111,14 @@ class BottomReaderNavBarProgressTest {
     }
 
     @Test
+    fun `slider mapping clamps invalid values`() {
+        assertEquals(0f, pageToSliderPosition(0, 100), 0.001f)
+        assertEquals(1f, pageToSliderPosition(101, 100), 0.001f)
+        assertEquals(1, sliderToPage(-1f, 100))
+        assertEquals(100, sliderToPage(2f, 100))
+    }
+
+    @Test
     fun `page navigation does not go below 1`() {
         assertEquals(1, previousPage(1))
         assertEquals(1, previousPage(0))
@@ -136,22 +144,6 @@ class BottomReaderNavBarProgressTest {
     }
 
     companion object {
-        fun pageToSliderPosition(currentPage: Int, totalPages: Int): Float {
-            return if (totalPages > 1) {
-                (currentPage - 1).toFloat() / (totalPages - 1).toFloat()
-            } else {
-                0f
-            }
-        }
-
-        fun sliderToPage(sliderPosition: Float, totalPages: Int): Int {
-            return if (totalPages > 1) {
-                (sliderPosition * (totalPages - 1)).toInt() + 1
-            } else {
-                1
-            }
-        }
-
         fun previousPage(currentPage: Int): Int {
             return if (currentPage > 1) currentPage - 1 else 1
         }

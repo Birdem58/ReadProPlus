@@ -35,4 +35,12 @@ class PdfSpeechTextFilterTest {
         assertEquals("The international result is clear.", cleanedPage)
         assertFalse(cleanedPage.contains("example.com"))
     }
+
+    @Test
+    fun `does not send scanned page placeholders to speech`() {
+        assertEquals(
+            listOf(""),
+            PdfSpeechTextFilter.mainTextPages(listOf("[PDF page 1]")),
+        )
+    }
 }

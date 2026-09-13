@@ -6,8 +6,10 @@ import com.example.readproplus.model.pdf.PdfDocument
 import com.example.readproplus.model.pdf.PdfExtractionProgress
 import com.example.readproplus.model.pdf.PdfExtractionResult
 import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.IOException
+import java.util.concurrent.CancellationException
 
 class PdfExtractor(
     private val resolver: PdfFileResolver,
@@ -16,6 +18,7 @@ class PdfExtractor(
         uri: Uri,
         password: String? = null,
         onProgress: (PdfExtractionProgress) -> Unit = {},
+        checkCancellation: () -> Unit = {},
     ): PdfExtractionResult {
         val descriptor = try {
             resolver.resolve(uri)
@@ -26,12 +29,9 @@ class PdfExtractor(
         }
 
         try {
+            val fileSizeBytes = descriptor.statSize
             val doc = loadDocument(descriptor, password)
             try {
-                if (doc.isEncrypted && password == null) {
-                    return PdfExtractionResult.PasswordProtected
-                }
-
                 val totalPages = doc.numberOfPages
                 onProgress(PdfExtractionProgress(0, totalPages, 0f))
 
@@ -42,10 +42,12 @@ class PdfExtractor(
 
                 val pages = mutableListOf<String>()
                 for (i in 0 until totalPages) {
+                    checkCancellation()
                     stripper.startPage = i + 1
                     stripper.endPage = i + 1
-                    val text = stripper.getText(doc)
+                    val text = PdfTextNormalizer.normalizePage(stripper.getText(doc))
                     pages.add(text)
+                    checkCancellation()
                     onProgress(
                         PdfExtractionProgress(
                             currentPage = i + 1,
@@ -55,7 +57,7 @@ class PdfExtractor(
                     )
                 }
 
-                val isImageBased = pages.all { it.isBlank() }
+                val isImageBased = pages.isNotEmpty() && pages.all { it.isBlank() }
                 val displayPages = if (isImageBased) {
                     pages.mapIndexed { index, _ -> "[PDF page ${index + 1}]" }
                 } else {
@@ -63,19 +65,15 @@ class PdfExtractor(
                 }
 
                 val toc = PdfOutlineReader.readOutline(doc)
-                val fallbackTitle = resolver.getDisplayName(uri)
-                    ?.substringBeforeLast('.', missingDelimiterValue = "")
-                    ?.takeIf { it.isNotBlank() }
-                    ?: uri.lastPathSegment
-                        ?.substringBeforeLast('.', missingDelimiterValue = "")
-                        ?.takeIf { it.isNotBlank() }
+                val fallbackTitle = PdfTitleResolver.fromDisplayName(resolver.getDisplayName(uri))
+                    ?: PdfTitleResolver.fromUri(uri)
                 val metadata = PdfMetadataReader.read(doc, fallbackTitle)
-                val title = metadata.title
-                    ?.takeIf { it.isNotBlank() }
+                val title = PdfTitleResolver.usableTitle(metadata.title)
                     ?: toc.firstOrNull()?.title?.takeIf { it.isNotBlank() }
                     ?: pages.firstOrNull()?.lineSequence()
                         ?.map { it.trim() }
                         ?.firstOrNull { it.length in 3..160 }
+                    ?: fallbackTitle
                     ?: "Untitled"
 
                 return PdfExtractionResult.Success(
@@ -87,7 +85,7 @@ class PdfExtractor(
                         keywords = metadata.keywords,
                         totalPages = pages.size,
                         pages = displayPages,
-                        fileSizeBytes = descriptor.statSize,
+                        fileSizeBytes = fileSizeBytes,
                         toc = toc,
                         format = com.example.readproplus.model.pdf.FormatType.PDF,
                         isImageBased = isImageBased,
@@ -97,20 +95,18 @@ class PdfExtractor(
             } finally {
                 doc.close()
             }
-        } catch (e: IOException) {
-            if (e.message?.contains("Invalid password", ignoreCase = true) == true ||
-                e.message?.contains("wrong password", ignoreCase = true) == true
-            ) {
-                return PdfExtractionResult.WrongPassword()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: InvalidPasswordException) {
+            return if (password.isNullOrEmpty()) {
+                PdfExtractionResult.PasswordProtected
+            } else {
+                PdfExtractionResult.WrongPassword()
             }
+        } catch (e: IOException) {
             return PdfExtractionResult.Corrupted(e.message ?: "Unknown error")
         } catch (e: Exception) {
             return PdfExtractionResult.Corrupted(e.message ?: "Unknown error")
-        } finally {
-            try {
-                descriptor.close()
-            } catch (_: Exception) {
-            }
         }
     }
 
@@ -118,14 +114,15 @@ class PdfExtractor(
         descriptor: ParcelFileDescriptor,
         password: String?,
     ): PDDocument {
-        // Use FileInputStream instead of AutoCloseInputStream to avoid
-        // prematurely closing the ParcelFileDescriptor. The caller manages
-        // the descriptor lifecycle in its own finally block.
-        val stream = java.io.FileInputStream(descriptor.fileDescriptor)
-        return if (password != null) {
-            PDDocument.load(stream, password)
-        } else {
-            PDDocument.load(stream)
+        // PDFBox copies the input into its scratch storage while loading, so
+        // the input stream can be closed as soon as load() returns. The
+        // AutoCloseInputStream also closes the descriptor on every exit path.
+        ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { stream ->
+            return if (password != null) {
+                PDDocument.load(stream, password)
+            } else {
+                PDDocument.load(stream)
+            }
         }
     }
 }

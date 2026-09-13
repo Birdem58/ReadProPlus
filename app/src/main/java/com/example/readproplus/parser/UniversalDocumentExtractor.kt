@@ -26,11 +26,12 @@ class UniversalDocumentExtractor(
         uri: Uri,
         password: String? = null,
         onPdfProgress: (PdfExtractionProgress) -> Unit = {},
+        checkCancellation: () -> Unit = {},
     ): PdfExtractionResult {
         val extension = getExtension(context, uri)
 
         if (extension.equals("pdf", ignoreCase = true)) {
-            return pdfExtractor.extract(uri, password, onPdfProgress)
+            return pdfExtractor.extract(uri, password, onPdfProgress, checkCancellation)
         }
 
         val parser = parsers.firstOrNull { it.canHandle(extension) }
@@ -44,14 +45,14 @@ class UniversalDocumentExtractor(
         }
 
         // Fallback to PDF extractor if format unknown
-        return pdfExtractor.extract(uri, password, onPdfProgress)
+        return pdfExtractor.extract(uri, password, onPdfProgress, checkCancellation)
     }
 
     companion object {
         fun getExtension(context: Context, uri: Uri): String {
             val scheme = uri.scheme
             if (scheme == "content") {
-                val mimeType = context.contentResolver.getType(uri)
+                val mimeType = runCatching { context.contentResolver.getType(uri) }.getOrNull()
                 if (mimeType != null) {
                     when {
                         mimeType.contains("pdf") -> return "pdf"

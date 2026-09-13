@@ -69,7 +69,7 @@ class KokoroEngine(
         pages: List<String>,
         startPageIndex: Int,
         endPageIndex: Int,
-        onAudioReady: suspend (samples: ShortArray, durationMs: Long) -> Unit = { _, _ -> },
+        onAudioReady: suspend (chunks: List<ShortArray>, sampleCount: Long, durationMs: Long) -> Unit = { _, _, _ -> },
     ) = coroutineScope {
         check(isReady()) { "Model not loaded. Call loadModel() first." }
         require(voiceEmbedding.isNotEmpty()) { "Voice not initialized" }
@@ -127,7 +127,11 @@ class KokoroEngine(
         ensureActive()
 
         runCatching {
-            onAudioReady(audioPlayer.snapshotSamples(), audioPlayer.getTotalDurationMs())
+            onAudioReady(
+                audioPlayer.snapshotChunks(),
+                audioPlayer.getTotalSampleCount(),
+                audioPlayer.getTotalDurationMs(),
+            )
         }.onFailure { error ->
             Log.w(TAG, "Could not save generated audio", error)
         }
@@ -234,7 +238,7 @@ class KokoroEngine(
 
     private suspend fun generateAudioSegment(sentence: String): AudioSegment = withContext(Dispatchers.Default) {
         val tokenIds = tokenizer.tokenize(sentence)
-        val audioSamples = inference.infer(tokenIds)
+        val audioSamples = inference.infer(tokenIds, config.speed)
 
         val pcmSamples = ShortArray(audioSamples.size) { i ->
             val sample = (audioSamples[i] * Short.MAX_VALUE).roundToInt()

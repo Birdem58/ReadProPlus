@@ -56,6 +56,8 @@ fun SmartZoomableCanvas(
     pageIndex: Int,
     document: PdfDocument?,
     scheme: ReaderColorScheme,
+    showControls: Boolean = true,
+    onSingleTap: () -> Unit = {},
     onPreviousPage: () -> Unit = {},
     onNextPage: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -79,9 +81,7 @@ fun SmartZoomableCanvas(
     }
 
     LaunchedEffect(document?.id, document?.sourceUri, pageIndex) {
-        val previousBitmap = pageBitmap
         pageBitmap = null
-        previousBitmap?.recycle()
         pageBitmap = withContext(Dispatchers.IO) {
             document?.let { DocumentPageRenderer.render(context, it, pageIndex) }
         }
@@ -110,7 +110,10 @@ fun SmartZoomableCanvas(
                     }
                 }
                 .pointerInput(Unit) {
-                    detectTapGestures(onDoubleTap = { toggleZoomLock() })
+                    detectTapGestures(
+                        onTap = { onSingleTap() },
+                        onDoubleTap = { toggleZoomLock() },
+                    )
                 }
                 .graphicsLayer(
                     scaleX = scale,
@@ -147,70 +150,72 @@ fun SmartZoomableCanvas(
             }
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(
-                onClick = onPreviousPage,
-                enabled = pageIndex > 0,
+        if (showControls) {
+            Row(
                 modifier = Modifier
-                    .clip(CircleShape)
-                    .background(scheme.surfaceColor.copy(alpha = 0.9f)),
+                    .fillMaxSize()
+                    .padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Previous page",
-                    tint = scheme.textColor,
-                )
+                IconButton(
+                    onClick = onPreviousPage,
+                    enabled = pageIndex > 0,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(scheme.surfaceColor.copy(alpha = 0.9f)),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Previous page",
+                        tint = scheme.textColor,
+                    )
+                }
+
+                IconButton(
+                    onClick = onNextPage,
+                    enabled = document != null && pageIndex < document.totalPages - 1,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(scheme.surfaceColor.copy(alpha = 0.9f)),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = "Next page",
+                        tint = scheme.textColor,
+                    )
+                }
             }
 
-            IconButton(
-                onClick = onNextPage,
-                enabled = document != null && pageIndex < document.totalPages - 1,
+            Row(
                 modifier = Modifier
-                    .clip(CircleShape)
-                    .background(scheme.surfaceColor.copy(alpha = 0.9f)),
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 24.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(scheme.surfaceColor.copy(alpha = 0.9f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = "Next page",
-                    tint = scheme.textColor,
+                IconButton(onClick = { scale = (scale - 0.2f).coerceAtLeast(1f) }) {
+                    Icon(Icons.Default.ZoomOut, contentDescription = "Zoom out", tint = scheme.textColor)
+                }
+                Text(
+                    text = "${(scale * 100).toInt()}%",
+                    fontSize = 13.sp,
+                    color = scheme.textColor,
+                    modifier = Modifier.padding(horizontal = 8.dp),
                 )
-            }
-        }
-
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 24.dp)
-                .clip(RoundedCornerShape(24.dp))
-                .background(scheme.surfaceColor.copy(alpha = 0.9f))
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = { scale = (scale - 0.2f).coerceAtLeast(1f) }) {
-                Icon(Icons.Default.ZoomOut, contentDescription = "Zoom out", tint = scheme.textColor)
-            }
-            Text(
-                text = "${(scale * 100).toInt()}%",
-                fontSize = 13.sp,
-                color = scheme.textColor,
-                modifier = Modifier.padding(horizontal = 8.dp),
-            )
-            IconButton(onClick = { scale = (scale + 0.2f).coerceAtMost(5f) }) {
-                Icon(Icons.Default.ZoomIn, contentDescription = "Zoom in", tint = scheme.textColor)
-            }
-            Spacer(Modifier.width(8.dp))
-            IconButton(onClick = { toggleZoomLock() }) {
-                Icon(
-                    imageVector = if (isZoomLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                    contentDescription = "Zoom lock",
-                    tint = if (isZoomLocked) scheme.accentColor else scheme.textColor,
-                )
+                IconButton(onClick = { scale = (scale + 0.2f).coerceAtMost(5f) }) {
+                    Icon(Icons.Default.ZoomIn, contentDescription = "Zoom in", tint = scheme.textColor)
+                }
+                Spacer(Modifier.width(8.dp))
+                IconButton(onClick = { toggleZoomLock() }) {
+                    Icon(
+                        imageVector = if (isZoomLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                        contentDescription = "Zoom lock",
+                        tint = if (isZoomLocked) scheme.accentColor else scheme.textColor,
+                    )
+                }
             }
         }
     }

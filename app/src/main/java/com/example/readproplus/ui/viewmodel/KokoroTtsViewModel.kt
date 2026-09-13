@@ -9,6 +9,7 @@ import com.example.readproplus.data.TtsPreferences
 import com.example.readproplus.model.tts.GeneratedAudio
 import com.example.readproplus.model.tts.TtsConfig
 import com.example.readproplus.model.tts.TtsState
+import com.example.readproplus.model.tts.TtsBackend
 import com.example.readproplus.model.tts.TtsVoice
 import com.example.readproplus.pdf.PdfSpeechTextFilter
 import com.example.readproplus.tts.DownloadProgress
@@ -17,7 +18,10 @@ import com.example.readproplus.tts.KokoroEngine
 import com.example.readproplus.tts.KokoroInference
 import com.example.readproplus.tts.KokoroTokenizer
 import com.example.readproplus.tts.ModelManager
+import com.example.readproplus.tts.PiperEngine
+import com.example.readproplus.tts.PiperModelManager
 import com.example.readproplus.tts.SystemTtsReader
+import com.example.readproplus.tts.TtsPlaybackService
 import com.example.readproplus.tts.VoiceManager
 import com.example.readproplus.tts.VoiceDownloadProgress
 import kotlinx.coroutines.CancellationException
@@ -35,12 +39,14 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val modelManager = ModelManager(application)
     private val voiceManager = VoiceManager(application)
+    private val piperModelManager = PiperModelManager(application)
     private val tokenizer = KokoroTokenizer(application)
     private val inference = KokoroInference()
     private val preferences = TtsPreferences(application)
     private val generatedAudioRepository = GeneratedAudioRepository(application)
     private val currentConfig = MutableStateFlow(TtsConfig())
     private val engine = KokoroEngine(inference, tokenizer, voiceManager, currentConfig.value)
+    private val piperEngine = PiperEngine(application, piperModelManager, currentConfig.value)
     private val systemTts = SystemTtsReader(application)
 
     private val _ttsState = MutableStateFlow<TtsState>(TtsState.Idle)
@@ -75,10 +81,18 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
 
     init {
         observeEngineState()
+        TtsPlaybackService.commandHandler = { action ->
+            when (action) {
+                TtsPlaybackService.ACTION_PAUSE -> pauseReading()
+                TtsPlaybackService.ACTION_RESUME -> resumeReading()
+                TtsPlaybackService.ACTION_STOP -> stopReading()
+            }
+        }
         viewModelScope.launch {
             systemTts.state.collect { state ->
                 if (activeBackend == ReaderBackend.SYSTEM) {
                     _ttsState.value = state
+                    TtsPlaybackService.update(getApplication(), state)
                 }
             }
         }
@@ -86,7 +100,7 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
             runCatching {
                 val storedVoice = TtsVoice.fromId(preferences.voiceId.first())
                 val restoredVoice = withContext(Dispatchers.IO) {
-                    storedVoice.takeIf(voiceManager::isVoiceAvailable) ?: TtsVoice.NICOLE
+                    storedVoice.takeIf(::isVoiceAvailable) ?: TtsVoice.NICOLE
                 }
                 val config = TtsConfig(
                     speed = preferences.speed.first(),
@@ -112,9 +126,9 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun checkAndDownloadModel() {
         viewModelScope.launch {
-            if (!hasUsableKokoroAssets() || !ensureNeuralEngine()) {
+            if (!hasUsableSelectedVoiceAssets() || !ensureNeuralEngine()) {
                 _ttsState.value = TtsState.Error(
-                    "Kokoro could not start. Use the reader button to continue with the device voice.",
+                    "The selected neural voice could not start. Use the reader button to continue with the device voice.",
                     recoverable = true,
                 )
             }
@@ -151,49 +165,69 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         val safeStartPage = startPage.coerceIn(1, pages.size)
         val safeEndPage = endPage.coerceIn(safeStartPage, pages.size)
         speakingJob?.cancel()
+        TtsPlaybackService.start(getApplication(), _selectedVoice.value.displayName)
         speakingJob = viewModelScope.launch {
             val pagesForSpeech = if (mainTextOnly) {
                 withContext(Dispatchers.Default) { PdfSpeechTextFilter.mainTextPages(pages) }
             } else {
                 pages
             }
-            val canUseKokoro = hasUsableKokoroAssets() && ensureNeuralEngine()
-            if (!canUseKokoro) {
+            val selectedVoice = _selectedVoice.value
+            val canUseNeuralVoice = hasUsableSelectedVoiceAssets() && ensureNeuralEngine()
+            if (!canUseNeuralVoice) {
                 startSystemReading(pagesForSpeech, safeStartPage - 1, safeEndPage - 1)
                 return@launch
             }
 
-            activeBackend = ReaderBackend.KOKORO
-            try {
-                engine.startSpeakingRange(
-                    pages = pagesForSpeech,
-                    startPageIndex = safeStartPage - 1,
-                    endPageIndex = safeEndPage - 1,
-                ) { samples, durationMs ->
-                    if (bookId != null) {
-                        val updatedItems = withContext(Dispatchers.IO) {
-                            generatedAudioRepository.save(
-                                bookId = bookId,
-                                bookTitle = bookTitle,
-                                startPage = safeStartPage,
-                                endPage = safeEndPage,
-                                durationMs = durationMs,
-                                samples = samples,
-                            )
-                            generatedAudioRepository.listByBook(bookId)
-                        }
-                        if (generatedAudioBookId == bookId) {
-                            _generatedAudios.value = updatedItems
-                        }
+            activeBackend = when (selectedVoice.backend) {
+                TtsBackend.KOKORO -> ReaderBackend.KOKORO
+                TtsBackend.PIPER -> ReaderBackend.PIPER
+            }
+            val saveGeneratedAudio: suspend (List<ShortArray>, Long, Long) -> Unit = { chunks, sampleCount, durationMs ->
+                if (bookId != null) {
+                    val updatedItems = withContext(Dispatchers.IO) {
+                        generatedAudioRepository.saveChunks(
+                            bookId = bookId,
+                            bookTitle = bookTitle,
+                            startPage = safeStartPage,
+                            endPage = safeEndPage,
+                            durationMs = durationMs,
+                            chunks = chunks,
+                            sampleCount = sampleCount,
+                        )
+                        generatedAudioRepository.listByBook(bookId)
+                    }
+                    if (generatedAudioBookId == bookId) {
+                        _generatedAudios.value = updatedItems
                     }
                 }
-                if (engine.engineState.value is EngineState.Error) {
-                    startSystemReading(pagesForSpeech, safeStartPage - 1, safeEndPage - 1)
+            }
+            try {
+                when (selectedVoice.backend) {
+                    TtsBackend.KOKORO -> engine.startSpeakingRange(
+                        pages = pagesForSpeech,
+                        startPageIndex = safeStartPage - 1,
+                        endPageIndex = safeEndPage - 1,
+                        onAudioReady = saveGeneratedAudio,
+                    )
+                    TtsBackend.PIPER -> piperEngine.startSpeakingRange(
+                        pages = pagesForSpeech,
+                        startPageIndex = safeStartPage - 1,
+                        endPageIndex = safeEndPage - 1,
+                        onAudioReady = saveGeneratedAudio,
+                    )
                 }
+                val engineState = when (selectedVoice.backend) {
+                    TtsBackend.KOKORO -> engine.engineState.value
+                    TtsBackend.PIPER -> piperEngine.engineState.value
+                }
+                if (engineState is EngineState.Error) {
+                    startSystemReading(pagesForSpeech, safeStartPage - 1, safeEndPage - 1)
+                    }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                Log.w(TAG, "Kokoro playback failed; using the device voice instead", error)
+                Log.w(TAG, "${selectedVoice.engineLabel} playback failed; using the device voice instead", error)
                 startSystemReading(pagesForSpeech, safeStartPage - 1, safeEndPage - 1)
             }
         }
@@ -211,6 +245,7 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun playGeneratedAudio(audio: GeneratedAudio) {
         speakingJob?.cancel()
+        TtsPlaybackService.start(getApplication(), "Generated audio")
         speakingJob = viewModelScope.launch {
             activeBackend = ReaderBackend.KOKORO
             try {
@@ -254,6 +289,7 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
     fun pauseReading() {
         when (activeBackend) {
             ReaderBackend.KOKORO -> viewModelScope.launch { engine.pause() }
+            ReaderBackend.PIPER -> viewModelScope.launch { piperEngine.pause() }
             ReaderBackend.SYSTEM -> systemTts.pause()
             ReaderBackend.NONE -> Unit
         }
@@ -262,6 +298,7 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
     fun resumeReading() {
         when (activeBackend) {
             ReaderBackend.KOKORO -> viewModelScope.launch { engine.resume() }
+            ReaderBackend.PIPER -> viewModelScope.launch { piperEngine.resume() }
             ReaderBackend.SYSTEM -> systemTts.resume().exceptionOrNull()?.let { error ->
                 _ttsState.value = TtsState.Error(error.message ?: "Could not resume device text-to-speech.", true)
             }
@@ -272,6 +309,7 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
     fun seekTo(progress: Float) {
         when (activeBackend) {
             ReaderBackend.KOKORO -> viewModelScope.launch { engine.seekTo(progress) }
+            ReaderBackend.PIPER -> viewModelScope.launch { piperEngine.seekTo(progress) }
             ReaderBackend.SYSTEM -> systemTts.seekTo(progress).exceptionOrNull()?.let { error ->
                 _ttsState.value = TtsState.Error(error.message ?: "Could not seek device text-to-speech.", true)
             }
@@ -283,9 +321,11 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         speakingJob?.cancel()
         when (activeBackend) {
             ReaderBackend.KOKORO -> viewModelScope.launch { engine.stop() }
+            ReaderBackend.PIPER -> viewModelScope.launch { piperEngine.stop() }
             ReaderBackend.SYSTEM -> systemTts.stop()
             ReaderBackend.NONE -> Unit
         }
+        TtsPlaybackService.stop(getApplication())
         activeBackend = ReaderBackend.NONE
         _ttsState.value = TtsState.Stopped
     }
@@ -295,6 +335,7 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         val updated = currentConfig.value.copy(speed = safeSpeed)
         currentConfig.value = updated
         engine.updateConfig(updated)
+        piperEngine.updateConfig(updated)
         systemTts.setSpeed(updated.speed)
         viewModelScope.launch { preferences.setSpeed(updated.speed) }
     }
@@ -305,6 +346,7 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         currentConfig.value = updated
         _volume.value = updated.volume
         engine.updateConfig(updated)
+        piperEngine.updateConfig(updated)
         systemTts.setVolume(updated.volume)
         volumeSaveJob?.cancel()
         volumeSaveJob = viewModelScope.launch {
@@ -314,7 +356,10 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun selectVoice(voice: TtsVoice) {
-        if (_voiceAvailability.value[voice.id] == true || voice.bundledAssetPath != null) {
+        if (_voiceAvailability.value[voice.id] == true ||
+            voice.bundledAssetPath != null ||
+            voice.piperAssetDirectory != null
+        ) {
             applyVoice(voice)
         } else {
             downloadAndSelectVoice(voice)
@@ -335,6 +380,11 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         volumeSaveJob?.cancel()
         systemTts.shutdown()
         engine.release()
+        piperEngine.release()
+        TtsPlaybackService.stop(getApplication())
+        if (TtsPlaybackService.commandHandler != null) {
+            TtsPlaybackService.commandHandler = null
+        }
         super.onCleared()
     }
 
@@ -343,58 +393,76 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
             engine.engineState.collect { state ->
                 if (activeBackend == ReaderBackend.KOKORO) {
                     _ttsState.value = mapEngineStateToTtsState(state)
+                    TtsPlaybackService.update(getApplication(), state)
+                }
+            }
+        }
+        viewModelScope.launch {
+            piperEngine.engineState.collect { state ->
+                if (activeBackend == ReaderBackend.PIPER) {
+                    _ttsState.value = mapEngineStateToTtsState(state)
+                    TtsPlaybackService.update(getApplication(), state)
                 }
             }
         }
     }
 
-    private suspend fun hasUsableKokoroAssets(): Boolean = withContext(Dispatchers.IO) {
-        voiceManager.isVoiceAvailable(_selectedVoice.value) &&
-            tokenizer.hasCompatibleVocabulary()
+    private suspend fun hasUsableSelectedVoiceAssets(): Boolean = withContext(Dispatchers.IO) {
+        isVoiceAvailable(_selectedVoice.value) &&
+            (_selectedVoice.value.backend == TtsBackend.PIPER || tokenizer.hasCompatibleVocabulary())
     }
 
     private suspend fun ensureNeuralEngine(): Boolean {
         if (isEngineInitialized) return true
 
         return try {
-            if (!modelManager.isModelReady()) {
-                modelManager.downloadModel().collect { progress ->
-                    when (progress) {
-                        is DownloadProgress.Downloading -> {
-                            _downloadProgress.value = progress
-                            _ttsState.value = TtsState.ModelDownloading(
-                                progress = progress.progress,
-                                bytesDownloaded = progress.bytesDownloaded,
-                                totalBytes = progress.totalBytes,
-                            )
-                        }
-
-                        is DownloadProgress.Complete -> {
-                            _downloadProgress.value = progress
-                            preferences.setModelDownloaded(true)
-                        }
-
-                        is DownloadProgress.Error -> throw IllegalStateException(progress.message)
-                    }
-                }
-            }
-
-            val modelPath = modelManager.getModelPath()
-                ?: throw IllegalStateException("Kokoro model file is not available after setup.")
             val voice = _selectedVoice.value
-            require(withContext(Dispatchers.IO) { voiceManager.isVoiceAvailable(voice) }) {
-                "The ${voice.displayName} voice is not available. Download it before reading."
-            }
-            engine.initialize(voice)
-            withContext(Dispatchers.Default) {
-                engine.loadModel(modelPath)
+            when (voice.backend) {
+                TtsBackend.PIPER -> {
+                    require(withContext(Dispatchers.IO) { piperModelManager.isVoiceAvailable(voice) }) {
+                        "The ${voice.displayName} Piper model is not available. Download it before reading."
+                    }
+                    piperEngine.initialize(voice)
+                }
+                TtsBackend.KOKORO -> {
+                    if (!modelManager.isModelReady()) {
+                        modelManager.downloadModel().collect { progress ->
+                            when (progress) {
+                                is DownloadProgress.Downloading -> {
+                                    _downloadProgress.value = progress
+                                    _ttsState.value = TtsState.ModelDownloading(
+                                        progress = progress.progress,
+                                        bytesDownloaded = progress.bytesDownloaded,
+                                        totalBytes = progress.totalBytes,
+                                    )
+                                }
+
+                                is DownloadProgress.Complete -> {
+                                    _downloadProgress.value = progress
+                                    preferences.setModelDownloaded(true)
+                                }
+
+                                is DownloadProgress.Error -> throw IllegalStateException(progress.message)
+                            }
+                        }
+                    }
+
+                    val modelPath = modelManager.getModelPath()
+                        ?: throw IllegalStateException("Kokoro model file is not available after setup.")
+                    require(withContext(Dispatchers.IO) { voiceManager.isVoiceAvailable(voice) }) {
+                        "The ${voice.displayName} voice is not available. Download it before reading."
+                    }
+                    engine.initialize(voice)
+                    withContext(Dispatchers.Default) { engine.loadModel(modelPath) }
+                }
             }
             isEngineInitialized = true
             true
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
-            Log.w(TAG, "Kokoro initialization failed", error)
+            Log.w(TAG, "${_selectedVoice.value.engineLabel} initialization failed", error)
             engine.release()
+            piperEngine.release()
             isEngineInitialized = false
             false
         }
@@ -453,7 +521,12 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
     private fun downloadAndSelectVoice(voice: TtsVoice) {
         voiceDownloadJob?.cancel()
         voiceDownloadJob = viewModelScope.launch {
-            voiceManager.downloadVoice(voice).collect { progress ->
+            val download = if (voice.backend == TtsBackend.PIPER) {
+                piperModelManager.downloadVoice(voice)
+            } else {
+                voiceManager.downloadVoice(voice)
+            }
+            download.collect { progress ->
                 _voiceDownloadProgress.value = progress
                 when (progress) {
                     is VoiceDownloadProgress.Complete -> {
@@ -475,6 +548,8 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         systemTts.stop()
         activeBackend = ReaderBackend.NONE
         engine.release()
+        piperEngine.release()
+        TtsPlaybackService.stop(getApplication())
         isEngineInitialized = false
 
         _selectedVoice.value = voice
@@ -486,14 +561,20 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
     private fun refreshVoiceAvailability() {
         viewModelScope.launch(Dispatchers.IO) {
             _voiceAvailability.value = TtsVoice.ALL.associate { voice ->
-                voice.id to voiceManager.isVoiceAvailable(voice)
+                voice.id to isVoiceAvailable(voice)
             }
         }
+    }
+
+    private fun isVoiceAvailable(voice: TtsVoice): Boolean = when (voice.backend) {
+        TtsBackend.KOKORO -> voiceManager.isVoiceAvailable(voice)
+        TtsBackend.PIPER -> piperModelManager.isVoiceAvailable(voice)
     }
 
     private enum class ReaderBackend {
         NONE,
         KOKORO,
+        PIPER,
         SYSTEM,
     }
 

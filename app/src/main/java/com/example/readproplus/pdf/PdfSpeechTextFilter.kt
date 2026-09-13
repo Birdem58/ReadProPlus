@@ -21,6 +21,7 @@ object PdfSpeechTextFilter {
         "^\\d{1,6}\\s*(?:/|of)\\s*\\d{1,6}$",
         RegexOption.IGNORE_CASE,
     )
+    private val imagePagePlaceholder = Regex("^\\[pdf page \\d{1,6}]$", RegexOption.IGNORE_CASE)
     private val caption = Regex(
         "^(?:fig(?:ure)?|table|chart|diagram|image|photo|illustration)\\s*" +
             "(?:[a-z]?\\d+[a-z]?|[ivxlcdm]+)\\b(?:\\s*[:.\\-–—]\\s*|\\s+).+$",
@@ -76,7 +77,9 @@ object PdfSpeechTextFilter {
         lineCount: Int,
         repeatedEdgeLines: Set<String>,
     ): Boolean {
-        if (isPageMarker(line) || isCaption(line) || isStandaloneLink(line)) return true
+        if (isPageMarker(line) || imagePagePlaceholder.matches(line) ||
+            isCaption(line) || isStandaloneLink(line)
+        ) return true
 
         val isPageEdge = index < EDGE_LINE_COUNT || index >= lineCount - EDGE_LINE_COUNT
         return isPageEdge && comparisonKey(line) in repeatedEdgeLines

@@ -7,9 +7,12 @@ import com.example.readproplus.model.pdf.PdfExtractionResult
 import com.example.readproplus.parser.UniversalDocumentExtractor
 import com.example.readproplus.pdf.PdfExtractor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flowOn
+import kotlin.coroutines.coroutineContext
+import java.util.concurrent.CancellationException
 
 sealed class AsyncState<out T> {
     data object Idle : AsyncState<Nothing>()
@@ -36,15 +39,23 @@ class PdfRepository(
     ): Flow<AsyncState<PdfDocument>> = channelFlow {
         send(AsyncState.Loading(0f))
         try {
-            val result = universalExtractor.extract(context, uri, password) { progress ->
-                trySend(
-                    AsyncState.Loading(
-                        progress = progress.percent,
-                        currentPage = progress.currentPage,
-                        totalPages = progress.totalPages,
+            val extractionContext = coroutineContext
+            val result = universalExtractor.extract(
+                context = context,
+                uri = uri,
+                password = password,
+                onPdfProgress = { progress ->
+                    extractionContext.ensureActive()
+                    trySend(
+                        AsyncState.Loading(
+                            progress = progress.percent,
+                            currentPage = progress.currentPage,
+                            totalPages = progress.totalPages,
+                        )
                     )
-                )
-            }
+                },
+                checkCancellation = { extractionContext.ensureActive() },
+            )
             when (result) {
                 is PdfExtractionResult.Success -> {
                     cache.put(result.document)
@@ -66,6 +77,8 @@ class PdfRepository(
                     send(AsyncState.Error("This document has no selectable text"))
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             send(AsyncState.Error(e.message ?: "Unknown error"))
         }

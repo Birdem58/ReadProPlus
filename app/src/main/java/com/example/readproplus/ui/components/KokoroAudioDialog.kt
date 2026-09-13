@@ -98,7 +98,7 @@ fun KokoroAudioDialog(
                 ) {
                     Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, tint = Accent)
                     Text(
-                        text = "Kokoro Audio",
+                        text = "Text-to-Speech Audio",
                         color = Color.White,
                         fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,

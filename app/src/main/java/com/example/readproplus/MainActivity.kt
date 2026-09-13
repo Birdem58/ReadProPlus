@@ -60,6 +60,7 @@ import com.example.readproplus.ui.theme.readerColorScheme
 import com.example.readproplus.ui.viewmodel.KokoroTtsViewModel
 import com.example.readproplus.ui.viewmodel.PdfExtractorViewModel
 import com.example.readproplus.ui.viewmodel.SidebarViewModel
+import com.example.readproplus.tts.VoiceDownloadProgress
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -114,7 +115,9 @@ class MainActivity : ComponentActivity() {
             // TTS initializes optional ONNX/audio dependencies. Do not create
             // it while the library is opening; the library must get its first
             // frame without waiting for the reader backend.
-            val ttsViewModel: KokoroTtsViewModel? = if (currentScreen is Screen.Reader) {
+            val ttsRequested = currentScreen is Screen.Reader ||
+                (currentScreen as? Screen.SidebarScreen)?.section == SidebarSection.SETTINGS
+            val ttsViewModel: KokoroTtsViewModel? = if (ttsRequested) {
                 viewModel()
             } else {
                 null
@@ -301,19 +304,20 @@ class MainActivity : ComponentActivity() {
                                     onBackClick = {
                                         currentScreen = Screen.Reader
                                     },
-                                    onHighlightClick = { highlight ->
-                                        viewModel.onBookSelected(
-                                            PdfDocument(
-                                                id = highlight.bookId,
-                                                title = highlight.bookTitle,
-                                                author = null,
-                                                totalPages = 1,
-                                                pages = emptyList(),
-                                            )
-                                        )
-                                        currentPage = highlight.pageNumber
-                                        currentScreen = Screen.Reader
-                                    },
+                                     onHighlightClick = { highlight ->
+                                         // Reopen the cached source document so a
+                                         // citation jump keeps its real pages and
+                                         // source URI instead of creating an empty
+                                         // placeholder reader.
+                                         libraryBooks.firstOrNull { it.id == highlight.bookId }?.let { document ->
+                                             viewModel.onBookSelected(document)
+                                             currentPage = highlight.pageNumber.coerceIn(
+                                                 1,
+                                                 document.pages.size.coerceAtLeast(1),
+                                             )
+                                             currentScreen = Screen.Reader
+                                         }
+                                     },
                                     onDeleteHighlight = { id ->
                                         viewModel.removeHighlight(id)
                                     },
@@ -348,6 +352,11 @@ class MainActivity : ComponentActivity() {
                                         readerSettings = updated
                                         readerSettingsRepository.saveSettings(updated)
                                     },
+                                    ttsVoices = TtsVoice.ALL,
+                                    selectedTtsVoice = selectedTtsVoice,
+                                    voiceAvailability = voiceAvailability,
+                                    voiceDownloadProgress = voiceDownloadProgress,
+                                    onTtsVoiceSelected = { voice -> ttsViewModel?.selectVoice(voice) },
                                     onBookClick = { navigateToBook(it) },
                                     onMenuClick = { scope.launch { drawerState.open() } },
                                 )
@@ -396,6 +405,11 @@ private fun SidebarSectionContent(
     onReadingModeChange: (ReadingMode) -> Unit,
     scrollMode: ScrollMode,
     onScrollModeChange: (ScrollMode) -> Unit,
+    ttsVoices: List<TtsVoice>,
+    selectedTtsVoice: TtsVoice,
+    voiceAvailability: Map<String, Boolean>,
+    voiceDownloadProgress: VoiceDownloadProgress?,
+    onTtsVoiceSelected: (TtsVoice) -> Unit,
     onBookClick: (PdfDocument) -> Unit,
     onMenuClick: () -> Unit,
 ) {
@@ -532,6 +546,11 @@ private fun SidebarSectionContent(
                 onReadingModeChange = onReadingModeChange,
                 scrollMode = scrollMode,
                 onScrollModeChange = onScrollModeChange,
+                ttsVoices = ttsVoices,
+                selectedTtsVoice = selectedTtsVoice,
+                voiceAvailability = voiceAvailability,
+                voiceDownloadProgress = voiceDownloadProgress,
+                onTtsVoiceSelected = onTtsVoiceSelected,
                 onMenuClick = onMenuClick,
             )
         }

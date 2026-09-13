@@ -87,6 +87,16 @@ class AudioPlayer {
         return result
     }
 
+    /**
+     * Returns the generated PCM chunks without copying their sample data.
+     * Callers must treat the returned arrays as read-only.
+     */
+    @Synchronized
+    fun snapshotChunks(): List<ShortArray> = masterBuffer.toList()
+
+    @Synchronized
+    fun getTotalSampleCount(): Long = totalSampleCount
+
     fun getTotalDurationMs(): Long {
         return ((totalSampleCount * 1000.0) / SAMPLE_RATE / appliedPlaybackSpeed).toLong()
     }
@@ -278,8 +288,12 @@ class AudioPlayer {
         } catch (e: Throwable) {
             Log.e(TAG, "Playback loop exception", e)
         } finally {
+            val completedNaturally = totalSampleCount > 0L &&
+                playheadSampleIndex.get().toLong() >= totalSampleCount
             isPlaying.set(false)
             if (!isPaused.get()) {
+                // Keep the player replayable after a recording reaches EOF.
+                if (completedNaturally) playheadSampleIndex.set(0)
                 _playerState.value = PlayerState.Idle
             }
             try {

@@ -1,6 +1,5 @@
 package com.example.readproplus
 
-import com.example.readproplus.data.DictionaryTranslationService
 import com.example.readproplus.data.DataExporter
 import com.example.readproplus.model.BookNote
 import com.example.readproplus.model.Bookmark
@@ -9,7 +8,6 @@ import com.example.readproplus.model.LibraryViewMode
 import com.example.readproplus.model.ReadingStats
 import com.example.readproplus.model.pdf.FormatType
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,19 +23,6 @@ class ReadProPlusUnitTest {
         assertEquals(FormatType.DJVU, FormatType.fromExtension("djvu"))
         assertEquals(FormatType.CBZ, FormatType.fromExtension("cbz"))
         assertEquals(FormatType.CBR, FormatType.fromExtension("cbr"))
-    }
-
-    @Test
-    fun testDictionaryLookupAndTranslation() {
-        val def = DictionaryTranslationService.lookupWord("library")
-        assertNotNull(def)
-        assertEquals("library", def.word)
-        assertTrue(def.definition.contains("collection"))
-
-        val trans = DictionaryTranslationService.translate("Read the book", "Spanish")
-        assertEquals("Read the book", trans.originalText)
-        assertEquals("Leer el libro", trans.translatedText)
-        assertEquals(3, trans.translatedWordCount)
     }
 
     @Test

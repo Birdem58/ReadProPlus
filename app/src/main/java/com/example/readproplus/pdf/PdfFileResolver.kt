@@ -22,17 +22,25 @@ class PdfFileResolver(private val context: Context) {
         return fd
     }
 
-    fun getDisplayName(uri: Uri): String? = runCatching {
-        context.contentResolver.query(
-            uri,
-            arrayOf(OpenableColumns.DISPLAY_NAME),
-            null,
-            null,
-            null,
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) cursor.getString(0) else null
-        }
-    }.getOrNull()
+    fun getDisplayName(uri: Uri): String? {
+        val providerName = runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull()
+
+        return providerName?.trim()?.takeIf { it.isNotBlank() }
+            ?: uri.path
+                ?.substringAfterLast('/')
+                ?.takeIf { it.isNotBlank() && it.contains('.') }
+                ?.let { Uri.decode(it) }
+    }
 }
 
 class PdfFileTooLargeException(val maxBytes: Long) :

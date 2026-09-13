@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import com.example.readproplus.model.ReaderSettings
 import com.example.readproplus.model.ReadingMode
 import com.example.readproplus.model.ScrollMode
+import com.example.readproplus.model.tts.TtsVoice
 import com.example.readproplus.ui.theme.ReaderColorScheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,6 +48,8 @@ fun ReaderSettingsSheet(
     onReadingModeChange: (ReadingMode) -> Unit,
     onSettingsChanged: (ReaderSettings) -> Unit,
     onDismiss: () -> Unit,
+    selectedTtsVoice: TtsVoice = TtsVoice.NICOLE,
+    onVoiceClick: () -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -157,6 +160,43 @@ fun ReaderSettingsSheet(
                         ),
                     )
                 }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = scheme.dividerColor)
+
+            Text(
+                text = "Speech Voice",
+                style = MaterialTheme.typography.titleSmall,
+                color = scheme.textColor,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(scheme.surfaceVariant)
+                    .clickable(onClick = onVoiceClick)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = selectedTtsVoice.displayName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = scheme.textColor,
+                    )
+                    Text(
+                        text = "Used when generating audio - ${selectedTtsVoice.details}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = scheme.pageNumberColor,
+                    )
+                }
+                Text(
+                    text = "Change",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = scheme.accentColor,
+                )
             }
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = scheme.dividerColor)

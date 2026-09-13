@@ -238,17 +238,10 @@ class PdfExtractorViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private fun getPdfDisplayName(uri: Uri): String? {
-        val context = getApplication<Application>()
-        var name: String? = null
-        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (nameIndex >= 0) {
-                    name = cursor.getString(nameIndex)
-                }
-            }
-        }
-        return name
+        // Providers can reject metadata queries even when the file itself is
+        // readable. Reuse the guarded resolver so picking such a URI cannot
+        // crash the activity before extraction reports its actual error.
+        return resolver.getDisplayName(uri)
     }
 
     private fun persistReadPermission(uri: Uri) {

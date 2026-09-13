@@ -17,7 +17,8 @@ object PdfMetadataReader {
         val info = doc.documentInformation
         val xmp = readXmp(doc)
         return PdfMetadata(
-            title = firstNonBlank(info.title, xmp?.title, fallbackTitle),
+            title = firstUsableTitle(info.title, xmp?.title)
+                ?: PdfTitleResolver.usableTitle(fallbackTitle),
             author = firstNonBlank(info.author, xmp?.author),
             subject = firstNonBlank(info.subject, xmp?.subject),
             keywords = firstNonBlank(info.keywords, xmp?.keywords),
@@ -77,6 +78,11 @@ object PdfMetadataReader {
     private fun firstNonBlank(vararg values: String?): String? = values
         .asSequence()
         .mapNotNull { it?.cleanMetadataValue() }
+        .firstOrNull()
+
+    private fun firstUsableTitle(vararg values: String?): String? = values
+        .asSequence()
+        .mapNotNull(PdfTitleResolver::usableTitle)
         .firstOrNull()
 
     private fun String.cleanMetadataValue(): String = replace('\u0000', ' ')

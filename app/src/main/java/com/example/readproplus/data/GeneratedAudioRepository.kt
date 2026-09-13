@@ -4,9 +4,7 @@ import android.content.Context
 import com.example.readproplus.model.tts.GeneratedAudio
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
-import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.IOException
@@ -33,6 +31,34 @@ class GeneratedAudioRepository(context: Context) {
     ): GeneratedAudio {
         require(samples.isNotEmpty()) { "Cannot save an empty audio recording." }
 
+        return saveChunks(
+            bookId = bookId,
+            bookTitle = bookTitle,
+            startPage = startPage,
+            endPage = endPage,
+            durationMs = durationMs,
+            chunks = listOf(samples),
+            sampleCount = samples.size.toLong(),
+        )
+    }
+
+    @Synchronized
+    fun saveChunks(
+        bookId: String,
+        bookTitle: String,
+        startPage: Int,
+        endPage: Int,
+        durationMs: Long,
+        chunks: List<ShortArray>,
+        sampleCount: Long,
+    ): GeneratedAudio {
+        require(sampleCount > 0L && chunks.any { it.isNotEmpty() }) {
+            "Cannot save an empty audio recording."
+        }
+        require(sampleCount <= Int.MAX_VALUE / BYTES_PER_SAMPLE) {
+            "Generated audio is too large for a WAV file."
+        }
+
         val id = UUID.randomUUID().toString()
         val fileName = "$id.wav"
         val item = GeneratedAudio(
@@ -46,7 +72,7 @@ class GeneratedAudioRepository(context: Context) {
             fileName = fileName,
         )
 
-        writeWav(audioFile(item), samples)
+        writeWav(audioFile(item), chunks, sampleCount)
         persist((loadAll() + item).filter { audioFile(it).exists() })
         return item
     }
@@ -56,15 +82,16 @@ class GeneratedAudioRepository(context: Context) {
         val file = audioFile(item)
         if (!file.exists()) throw IOException("Generated audio file is missing.")
 
-        DataInputStream(BufferedInputStream(file.inputStream())).use { input ->
-            val header = ByteArray(WAV_HEADER_SIZE)
-            input.readFully(header)
-            require(String(header, 0, 4, Charsets.US_ASCII) == "RIFF") { "Invalid WAV file." }
-            require(String(header, 8, 12, Charsets.US_ASCII) == "WAVE") { "Invalid WAV file." }
+        val bytes = file.readBytes()
+        if (isWav(bytes)) {
+            return readWavSamples(bytes)
+        }
 
-            val dataSize = littleEndianInt(header, 40)
-            require(dataSize > 0 && dataSize % 2 == 0) { "Generated WAV has no PCM samples." }
-            return ShortArray(dataSize / 2) { input.readShortLE() }
+        // Older builds stored the generated 24 kHz mono samples directly in a
+        // file named .wav. Keep those recordings playable and migrate them to
+        // the canonical WAV container after they are read.
+        return readRawPcmSamples(bytes).also { samples ->
+            runCatching { writeWav(file, listOf(samples), samples.size.toLong()) }
         }
     }
 
@@ -81,25 +108,111 @@ class GeneratedAudioRepository(context: Context) {
         return File(directory, safeName)
     }
 
-    private fun writeWav(file: File, samples: ShortArray) {
-        val dataSize = samples.size * BYTES_PER_SAMPLE
-        DataOutputStream(BufferedOutputStream(file.outputStream())).use { output ->
-            output.writeBytes("RIFF")
-            output.writeIntLE(WAV_HEADER_SIZE - 8 + dataSize)
-            output.writeBytes("WAVE")
-            output.writeBytes("fmt ")
-            output.writeIntLE(16)
-            output.writeShortLE(1)
-            output.writeShortLE(CHANNEL_COUNT)
-            output.writeIntLE(SAMPLE_RATE)
-            output.writeIntLE(SAMPLE_RATE * CHANNEL_COUNT * BYTES_PER_SAMPLE)
-            output.writeShortLE(CHANNEL_COUNT * BYTES_PER_SAMPLE)
-            output.writeShortLE(BITS_PER_SAMPLE)
-            output.writeBytes("data")
-            output.writeIntLE(dataSize)
-            samples.forEach { sample -> output.writeShortLE(sample.toInt()) }
+    private fun writeWav(file: File, chunks: List<ShortArray>, sampleCount: Long) {
+        val dataSize = (sampleCount * BYTES_PER_SAMPLE).toInt()
+        val temporaryFile = File(file.parentFile, "${file.name}.tmp")
+        try {
+            DataOutputStream(BufferedOutputStream(temporaryFile.outputStream())).use { output ->
+                output.writeBytes("RIFF")
+                output.writeIntLE(WAV_HEADER_SIZE - 8 + dataSize)
+                output.writeBytes("WAVE")
+                output.writeBytes("fmt ")
+                output.writeIntLE(16)
+                output.writeShortLE(1)
+                output.writeShortLE(CHANNEL_COUNT)
+                output.writeIntLE(SAMPLE_RATE)
+                output.writeIntLE(SAMPLE_RATE * CHANNEL_COUNT * BYTES_PER_SAMPLE)
+                output.writeShortLE(CHANNEL_COUNT * BYTES_PER_SAMPLE)
+                output.writeShortLE(BITS_PER_SAMPLE)
+                output.writeBytes("data")
+                output.writeIntLE(dataSize)
+                chunks.forEach { chunk ->
+                    chunk.forEach { sample -> output.writeShortLE(sample.toInt()) }
+                }
+            }
+            check(temporaryFile.renameTo(file)) { "Could not finalize generated WAV file." }
+        } finally {
+            temporaryFile.delete()
         }
     }
+
+    private fun isWav(bytes: ByteArray): Boolean =
+        bytes.size >= 12 &&
+            ascii(bytes, 0, 4) == "RIFF" &&
+            ascii(bytes, 8, 4) == "WAVE"
+
+    private fun readWavSamples(bytes: ByteArray): ShortArray {
+        var offset = 12
+        var audioFormat: Int? = null
+        var channelCount: Int? = null
+        var bitsPerSample: Int? = null
+        var dataOffset = -1
+        var dataSize = 0
+
+        while (offset + WAV_CHUNK_HEADER_SIZE <= bytes.size) {
+            val chunkId = ascii(bytes, offset, 4)
+            val chunkSize = littleEndianUnsignedInt(bytes, offset + 4)
+            val chunkDataOffset = offset + WAV_CHUNK_HEADER_SIZE
+            val chunkEnd = chunkDataOffset.toLong() + chunkSize
+            require(chunkEnd <= bytes.size) { "Generated WAV is truncated." }
+
+            when (chunkId) {
+                "fmt " -> {
+                    require(chunkSize >= 16L) { "Generated WAV format chunk is invalid." }
+                    audioFormat = littleEndianUnsignedShort(bytes, chunkDataOffset)
+                    channelCount = littleEndianUnsignedShort(bytes, chunkDataOffset + 2)
+                    bitsPerSample = littleEndianUnsignedShort(bytes, chunkDataOffset + 14)
+                }
+
+                "data" -> {
+                    require(chunkSize > 0L && chunkSize % 2L == 0L) {
+                        "Generated WAV has no PCM samples."
+                    }
+                    dataOffset = chunkDataOffset
+                    dataSize = chunkSize.toInt()
+                }
+            }
+
+            val nextOffset = chunkEnd.toInt() + (chunkSize.toInt() and 1)
+            require(nextOffset <= bytes.size) { "Generated WAV is truncated." }
+            offset = nextOffset
+        }
+
+        require(audioFormat == PCM_FORMAT) { "Generated WAV is not PCM audio." }
+        require(channelCount == CHANNEL_COUNT && bitsPerSample == BITS_PER_SAMPLE) {
+            "Generated WAV format is not supported."
+        }
+        require(dataOffset >= 0 && dataSize > 0) { "Generated WAV has no PCM samples." }
+
+        return ShortArray(dataSize / BYTES_PER_SAMPLE) { index ->
+            littleEndianShort(bytes, dataOffset + index * BYTES_PER_SAMPLE)
+        }
+    }
+
+    private fun readRawPcmSamples(bytes: ByteArray): ShortArray {
+        require(bytes.isNotEmpty() && bytes.size % BYTES_PER_SAMPLE == 0) {
+            "Invalid WAV file."
+        }
+        return ShortArray(bytes.size / BYTES_PER_SAMPLE) { index ->
+            littleEndianShort(bytes, index * BYTES_PER_SAMPLE)
+        }
+    }
+
+    private fun ascii(bytes: ByteArray, offset: Int, length: Int): String =
+        String(bytes, offset, length, Charsets.US_ASCII)
+
+    private fun littleEndianUnsignedInt(bytes: ByteArray, offset: Int): Long =
+        (bytes[offset].toLong() and 0xFF) or
+            ((bytes[offset + 1].toLong() and 0xFF) shl 8) or
+            ((bytes[offset + 2].toLong() and 0xFF) shl 16) or
+            ((bytes[offset + 3].toLong() and 0xFF) shl 24)
+
+    private fun littleEndianUnsignedShort(bytes: ByteArray, offset: Int): Int =
+        (bytes[offset].toInt() and 0xFF) or
+            ((bytes[offset + 1].toInt() and 0xFF) shl 8)
+
+    private fun littleEndianShort(bytes: ByteArray, offset: Int): Short =
+        littleEndianUnsignedShort(bytes, offset).toShort()
 
     private fun loadAll(): List<GeneratedAudio> {
         if (!indexFile.exists()) return emptyList()
@@ -138,12 +251,6 @@ class GeneratedAudioRepository(context: Context) {
         }.also { indexFile.writeText(it.toString(), Charsets.UTF_8) }
     }
 
-    private fun littleEndianInt(bytes: ByteArray, offset: Int): Int =
-        (bytes[offset].toInt() and 0xFF) or
-            ((bytes[offset + 1].toInt() and 0xFF) shl 8) or
-            ((bytes[offset + 2].toInt() and 0xFF) shl 16) or
-            ((bytes[offset + 3].toInt() and 0xFF) shl 24)
-
     private fun DataOutputStream.writeIntLE(value: Int) {
         writeByte(value and 0xFF)
         writeByte((value ushr 8) and 0xFF)
@@ -156,12 +263,6 @@ class GeneratedAudioRepository(context: Context) {
         writeByte((value ushr 8) and 0xFF)
     }
 
-    private fun DataInputStream.readShortLE(): Short {
-        val low = readUnsignedByte()
-        val high = readUnsignedByte()
-        return ((high shl 8) or low).toShort()
-    }
-
     private companion object {
         const val DIRECTORY_NAME = "generated_audio"
         const val INDEX_FILE_NAME = "index.json"
@@ -170,5 +271,7 @@ class GeneratedAudioRepository(context: Context) {
         const val BITS_PER_SAMPLE = 16
         const val BYTES_PER_SAMPLE = BITS_PER_SAMPLE / 8
         const val WAV_HEADER_SIZE = 44
+        const val WAV_CHUNK_HEADER_SIZE = 8
+        const val PCM_FORMAT = 1
     }
 }

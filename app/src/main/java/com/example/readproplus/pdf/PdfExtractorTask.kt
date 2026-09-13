@@ -57,11 +57,12 @@ class PdfExtractorTask(
         descriptor: ParcelFileDescriptor,
         password: String?,
     ): PDDocument {
-        val stream = java.io.FileInputStream(descriptor.fileDescriptor)
-        return if (password != null) {
-            PDDocument.load(stream, password)
-        } else {
-            PDDocument.load(stream)
+        ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { stream ->
+            return if (password != null) {
+                PDDocument.load(stream, password)
+            } else {
+                PDDocument.load(stream)
+            }
         }
     }
 }

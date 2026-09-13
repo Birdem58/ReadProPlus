@@ -25,7 +25,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
     }
 
@@ -35,6 +35,14 @@ android {
         }
         jniLibs {
             useLegacyPackaging = false
+            // Sherpa-ONNX and the Kokoro Java binding both publish this
+            // SONAME. Keep the Sherpa copy selected deterministically; it is
+            // the runtime that owns the Piper JNI dependency.
+            pickFirsts += setOf(
+                "lib/arm64-v8a/libonnxruntime.so",
+                "lib/armeabi-v7a/libonnxruntime.so",
+                "lib/x86_64/libonnxruntime.so",
+            )
         }
     }
 
@@ -121,6 +129,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.pdfbox.android)
     implementation(libs.onnxruntime.android)
+    implementation("org.apache.commons:commons-compress:1.27.1")
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.junrar)
     implementation(libs.libdjvu)

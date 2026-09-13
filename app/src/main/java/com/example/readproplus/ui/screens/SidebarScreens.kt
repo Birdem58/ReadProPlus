@@ -89,8 +89,11 @@ import com.example.readproplus.model.ReadingMode
 import com.example.readproplus.model.ScrollMode
 import com.example.readproplus.model.SidebarSection
 import com.example.readproplus.model.pdf.PdfDocument
+import com.example.readproplus.model.tts.TtsVoice
 import com.example.readproplus.ui.components.DocumentCover
+import com.example.readproplus.ui.components.VoicePickerSheet
 import com.example.readproplus.ui.theme.ReaderColorScheme
+import com.example.readproplus.tts.VoiceDownloadProgress
 
 private val bookColors = listOf(
     Color(0xFF2E7D32), Color(0xFF8B5E3C), Color(0xFFC62828),
@@ -922,8 +925,15 @@ fun SettingsScreen(
     onReadingModeChange: (ReadingMode) -> Unit,
     scrollMode: ScrollMode,
     onScrollModeChange: (ScrollMode) -> Unit,
+    ttsVoices: List<TtsVoice> = TtsVoice.ALL,
+    selectedTtsVoice: TtsVoice = TtsVoice.NICOLE,
+    voiceAvailability: Map<String, Boolean> = emptyMap(),
+    voiceDownloadProgress: VoiceDownloadProgress? = null,
+    onTtsVoiceSelected: (TtsVoice) -> Unit = {},
     onMenuClick: () -> Unit,
 ) {
+    var showVoicePicker by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -964,11 +974,35 @@ fun SettingsScreen(
             }
             item {
                 SettingsSection("TTS (Text-to-Speech)", listOf(
-                    "TTS Engine" to "Kokoro / System TTS",
+                    "TTS Engine" to "Kokoro, Piper, or System TTS",
                     "Speech Speed" to "Adjust reading speed",
-                    "Default Voice" to "Choose TTS voice",
+                    "Default Voice" to "${selectedTtsVoice.displayName} (${selectedTtsVoice.engineLabel})",
                     "Volume" to "Adjust TTS volume",
                 ), scheme)
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = scheme.surfaceColor),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showVoicePicker = true },
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Speech voice", color = scheme.textColor, fontWeight = FontWeight.Medium)
+                            Text(
+                                "${selectedTtsVoice.displayName} · ${selectedTtsVoice.details}",
+                                color = scheme.pageNumberColor,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        Text("Change", color = scheme.accentColor, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
             item {
                 SettingsSection("Library", listOf(
@@ -988,6 +1022,16 @@ fun SettingsScreen(
                     "License" to "MIT License",
                 ), scheme)
             }
+        }
+        if (showVoicePicker) {
+            VoicePickerSheet(
+                voices = ttsVoices,
+                selectedVoice = selectedTtsVoice,
+                voiceAvailability = voiceAvailability,
+                downloadProgress = voiceDownloadProgress,
+                onVoiceSelected = onTtsVoiceSelected,
+                onDismiss = { showVoicePicker = false },
+            )
         }
     }
 }

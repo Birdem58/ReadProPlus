@@ -52,13 +52,13 @@ fun VoicePickerSheet(
     ) {
         Column(modifier = Modifier.padding(bottom = 24.dp)) {
             Text(
-                text = "Kokoro voices",
+                text = "Text-to-speech voices",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
             )
             Text(
-                text = "Nicole is included. Tap any other voice to download it once (about 0.5 MB).",
+                text = "Kokoro voices and Turkish Piper voices. Nicole plus DFKI and Fahrettin are included; other voices download once when selected.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 14.sp,
                 modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
@@ -71,7 +71,9 @@ fun VoicePickerSheet(
                     VoicePickerRow(
                         voice = voice,
                         isSelected = voice.id == selectedVoice.id,
-                        isAvailable = voiceAvailability[voice.id] == true || voice.bundledAssetPath != null,
+                        isAvailable = voiceAvailability[voice.id] == true ||
+                            voice.bundledAssetPath != null ||
+                            voice.piperAssetDirectory != null,
                         downloadProgress = downloadProgress,
                         onClick = { onVoiceSelected(voice) },
                     )
@@ -110,7 +112,7 @@ private fun VoicePickerRow(
                 fontSize = 16.sp,
             )
             Text(
-                text = voice.details,
+                text = "${voice.engineLabel} • ${voice.details}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
             )

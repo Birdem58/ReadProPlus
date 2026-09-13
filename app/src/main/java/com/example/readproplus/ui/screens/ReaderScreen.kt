@@ -85,6 +85,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.example.readproplus.data.AnnotationRepository
 import com.example.readproplus.data.ReaderSettingsRepository
 import com.example.readproplus.model.BookNote
@@ -114,6 +116,8 @@ import kotlinx.coroutines.launch
 private val DarkTeal = Color(0xFF006064)
 private val BlueHandle = Color(0xFF4FC3F7)
 private val ReaderProgressThumbColor = Color(0xFF9DEBF2)
+private val ReaderProgressTrackColor = Color(0xFF9DEBF2).copy(alpha = 0.28f)
+private val ReaderProgressInactiveTrackColor = Color.White.copy(alpha = 0.22f)
 private val WhiteText = Color(0xFFFFFFFF)
 
 private val fontSizeOptions = listOf(14, 16, 18, 20, 22, 24, 28)
@@ -160,6 +164,7 @@ fun ReaderScreen(
     var fontSizeIndex by remember { mutableIntStateOf(2) }
     var brightness by remember { mutableFloatStateOf(1f) }
     var sliderPosition by remember { mutableFloatStateOf(0f) }
+    var sliderJumpTargetPage by remember { mutableIntStateOf(0) }
     var selectedHighlightColor by remember { mutableStateOf(Color(0xFFFFD54F)) }
 
     val readerSettingsRepository = remember { ReaderSettingsRepository(context) }
@@ -176,6 +181,7 @@ fun ReaderScreen(
     var showVoicePicker by remember { mutableStateOf(false) }
     var showReaderSettingsSheet by remember { mutableStateOf(false) }
     var showNotesSheet by remember { mutableStateOf(false) }
+    var isReaderChromeVisible by rememberSaveable(document?.id) { mutableStateOf(true) }
 
     var bookmarks by remember { mutableStateOf(emptyList<Bookmark>()) }
     var notes by remember { mutableStateOf(emptyList<BookNote>()) }
@@ -193,6 +199,21 @@ fun ReaderScreen(
     val bookTitle = document?.title ?: "Unknown"
     val isPageImageMode = readerSettings.renderMode == "PAGE_IMAGE" || document?.isImageBased == true
 
+    fun jumpToPageImmediately(page: Int) {
+        val newPage = page.coerceIn(1, totalPages.coerceAtLeast(1))
+        currentPage = newPage
+        if (scrollMode == ScrollMode.VERTICAL && !isPageImageMode && totalPages > 0) {
+            // Keep the scroll observer from publishing the old visible page
+            // while this non-animated jump is being applied.
+            sliderJumpTargetPage = newPage
+            readerScope.launch {
+                verticalListState.scrollToItem(newPage - 1)
+            }
+        } else {
+            sliderJumpTargetPage = 0
+        }
+    }
+
     fun refreshAnnotations() {
         document?.let { doc ->
             bookmarks = annotationRepo.getBookmarksForBook(doc.id)
@@ -206,11 +227,7 @@ fun ReaderScreen(
 
     LaunchedEffect(currentPage, totalPages, scrollMode) {
         if (scrollMode != ScrollMode.VERTICAL) {
-            if (totalPages > 1) {
-                sliderPosition = (currentPage - 1).toFloat() / (totalPages - 1).toFloat()
-            } else {
-                sliderPosition = 0f
-            }
+            sliderPosition = pageToSliderPosition(currentPage, totalPages)
         }
     }
 
@@ -225,14 +242,15 @@ fun ReaderScreen(
             } else {
                 0f
             }
-            verticalListState.firstVisibleItemIndex + withinPageProgress
-        }.collectLatest { position ->
-            currentPage = (position.toInt() + 1).coerceIn(1, totalPages)
-            sliderPosition = if (totalPages > 1) {
-                (position / (totalPages - 1).toFloat()).coerceIn(0f, 1f)
-            } else {
-                0f
+            verticalListState.firstVisibleItemIndex + withinPageProgress to sliderJumpTargetPage
+        }.collectLatest { (position, requestedPage) ->
+            val visiblePage = (position.toInt() + 1).coerceIn(1, totalPages)
+            if (requestedPage > 0) {
+                if (visiblePage == requestedPage) sliderJumpTargetPage = 0
+                return@collectLatest
             }
+            currentPage = visiblePage
+            sliderPosition = pageToSliderPosition(position.toInt() + 1, totalPages)
         }
     }
 
@@ -281,7 +299,7 @@ fun ReaderScreen(
                 LaunchedEffect(isSearchActive) {
                     if (isSearchActive) searchFocusRequester.requestFocus()
                 }
-            } else {
+            } else if (isReaderChromeVisible) {
                 TopReaderBar(
                     bookTitle = bookTitle,
                     readingMode = readingMode,
@@ -306,20 +324,22 @@ fun ReaderScreen(
                 )
             }
 
-            BrightnessSubHeader(
-                brightness = brightness,
-                scheme = scheme,
-                onBrightnessChange = { brightness = it },
-                renderMode = readerSettings.renderMode,
-                onRenderModeToggle = {
-                    val updated = readerSettings.copy(
-                        renderMode = if (readerSettings.renderMode == "TEXT_REFLOW") "PAGE_IMAGE" else "TEXT_REFLOW",
-                    )
-                    readerSettings = updated
-                    readerSettingsRepository.saveSettings(updated)
-                    onReaderSettingsChanged(updated)
-                },
-            )
+            if (isReaderChromeVisible) {
+                BrightnessSubHeader(
+                    brightness = brightness,
+                    scheme = scheme,
+                    onBrightnessChange = { brightness = it },
+                    renderMode = readerSettings.renderMode,
+                    onRenderModeToggle = {
+                        val updated = readerSettings.copy(
+                            renderMode = if (readerSettings.renderMode == "TEXT_REFLOW") "PAGE_IMAGE" else "TEXT_REFLOW",
+                        )
+                        readerSettings = updated
+                        readerSettingsRepository.saveSettings(updated)
+                        onReaderSettingsChanged(updated)
+                    },
+                )
+            }
 
             Box(
                 modifier = Modifier
@@ -332,6 +352,8 @@ fun ReaderScreen(
                         pageIndex = currentPage - 1,
                         document = document,
                         scheme = scheme,
+                        showControls = isReaderChromeVisible,
+                        onSingleTap = { isReaderChromeVisible = !isReaderChromeVisible },
                         onPreviousPage = { if (currentPage > 1) currentPage-- },
                         onNextPage = { if (currentPage < totalPages) currentPage++ },
                     )
@@ -348,6 +370,7 @@ fun ReaderScreen(
                             textAlignment = readerSettings.alignment,
                             searchQuery = searchQuery,
                             highlightColor = selectedHighlightColor,
+                            onSingleTap = { isReaderChromeVisible = !isReaderChromeVisible },
                             onPrevPage = { if (currentPage > 1) currentPage-- },
                             onNextPage = { if (currentPage < totalPages) currentPage++ },
                             onHighlightToggle = { bId, bTitle, pNum, text, _ ->
@@ -368,6 +391,7 @@ fun ReaderScreen(
                             textAlignment = readerSettings.alignment,
                             searchQuery = searchQuery,
                             highlightColor = selectedHighlightColor,
+                            onSingleTap = { isReaderChromeVisible = !isReaderChromeVisible },
                             onHighlightToggle = { bId, bTitle, pNum, text, _ ->
                                 onHighlightToggle(bId, bTitle, pNum, text, selectedHighlightColor.value.toLong())
                             },
@@ -378,13 +402,15 @@ fun ReaderScreen(
                     }
                 }
 
-                EngelleButton(
-                    modifier = Modifier.align(Alignment.BottomEnd),
-                    onClick = { showKokoroAudioDialog = true },
-                )
+                if (isReaderChromeVisible) {
+                    EngelleButton(
+                        modifier = Modifier.align(Alignment.BottomEnd),
+                        onClick = { showKokoroAudioDialog = true },
+                    )
+                }
             }
 
-            if (ttsState is TtsState.Error) {
+            if (isReaderChromeVisible && ttsState is TtsState.Error) {
                 PdfErrorBanner(
                     message = ttsState.message,
                     visible = true,
@@ -392,42 +418,41 @@ fun ReaderScreen(
                 )
             }
 
-            TtsControlBar(
-                ttsState = ttsState,
-                volume = ttsVolume,
-                onPlay = onTtsResume,
-                onPause = onTtsPause,
-                onStop = onTtsStop,
-                onSeek = onTtsSeek,
-                onSpeedClick = {
-                    ttsCurrentSpeed = when (ttsState) {
-                        is TtsState.Playing -> ttsState.speed
-                        is TtsState.Paused -> ttsState.speed
-                        else -> 1.0f
-                    }
-                    showTtsSpeedDialog = true
-                },
-                onVolumeChange = onTtsVolumeChanged,
-                onDismiss = onTtsDismiss,
-            )
-
-            BottomReaderNavBar(
-                currentPage = currentPage,
-                totalPages = totalPages,
-                sliderPosition = sliderPosition,
-                onSliderDrag = { sliderPosition = it },
-                onSliderDragFinished = {
-                    val newPage = (sliderPosition * (totalPages - 1)).toInt() + 1
-                    if (newPage in 1..totalPages) {
-                        currentPage = newPage
-                        if (scrollMode == ScrollMode.VERTICAL && !isPageImageMode) {
-                            readerScope.launch {
-                                verticalListState.animateScrollToItem(newPage - 1)
-                            }
+            if (isReaderChromeVisible) {
+                TtsControlBar(
+                    ttsState = ttsState,
+                    volume = ttsVolume,
+                    onPlay = onTtsResume,
+                    onPause = onTtsPause,
+                    onStop = onTtsStop,
+                    onSeek = onTtsSeek,
+                    onSpeedClick = {
+                        ttsCurrentSpeed = when (ttsState) {
+                            is TtsState.Playing -> ttsState.speed
+                            is TtsState.Paused -> ttsState.speed
+                            else -> 1.0f
                         }
-                    }
-                },
-            )
+                        showTtsSpeedDialog = true
+                    },
+                    onVolumeChange = onTtsVolumeChanged,
+                    onDismiss = onTtsDismiss,
+                )
+            }
+
+            if (isReaderChromeVisible) {
+                BottomReaderNavBar(
+                    currentPage = currentPage,
+                    totalPages = totalPages,
+                    sliderPosition = sliderPosition,
+                    onSliderDrag = { position ->
+                        sliderPosition = position
+                        jumpToPageImmediately(sliderToPage(position, totalPages))
+                    },
+                    onSliderDragFinished = {
+                        jumpToPageImmediately(sliderToPage(sliderPosition, totalPages))
+                    },
+                )
+            }
         }
 
         if (showTocSheet && document != null && document.toc.isNotEmpty()) {
@@ -483,17 +508,6 @@ fun ReaderScreen(
             )
         }
 
-        if (showVoicePicker) {
-            VoicePickerSheet(
-                voices = ttsVoices,
-                selectedVoice = selectedTtsVoice,
-                voiceAvailability = voiceAvailability,
-                downloadProgress = voiceDownloadProgress,
-                onVoiceSelected = onTtsVoiceSelected,
-                onDismiss = { showVoicePicker = false },
-            )
-        }
-
         if (showReaderSettingsSheet) {
             ReaderSettingsSheet(
                 settings = readerSettings,
@@ -502,12 +516,25 @@ fun ReaderScreen(
                 onScrollModeChange = onScrollModeChange,
                 readingMode = readingMode,
                 onReadingModeChange = onReadingModeChange,
+                selectedTtsVoice = selectedTtsVoice,
+                onVoiceClick = { showVoicePicker = true },
                 onSettingsChanged = {
                     readerSettings = it
                     readerSettingsRepository.saveSettings(it)
                     onReaderSettingsChanged(it)
                 },
                 onDismiss = { showReaderSettingsSheet = false },
+            )
+        }
+
+        if (showVoicePicker) {
+            VoicePickerSheet(
+                voices = ttsVoices,
+                selectedVoice = selectedTtsVoice,
+                voiceAvailability = voiceAvailability,
+                downloadProgress = voiceDownloadProgress,
+                onVoiceSelected = onTtsVoiceSelected,
+                onDismiss = { showVoicePicker = false },
             )
         }
 
@@ -671,6 +698,7 @@ private fun PagedContent(
     textAlignment: String = "Justify",
     searchQuery: String = "",
     highlightColor: Color = Color.Transparent,
+    onSingleTap: () -> Unit,
     onPrevPage: () -> Unit,
     onNextPage: () -> Unit,
     onHighlightToggle: (bookId: String, bookTitle: String, pageNumber: Int, text: String, color: Long) -> Unit = { _, _, _, _, _ -> },
@@ -678,7 +706,11 @@ private fun PagedContent(
     bookTitle: String = "",
     pageHighlights: Set<String> = emptySet(),
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(onClick = onSingleTap),
+    ) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -715,7 +747,7 @@ private fun PagedContent(
                             color = scheme.textColor,
                             textAlign = readerTextAlign(textAlignment),
                             modifier = Modifier.combinedClickable(
-                                onClick = {},
+                                onClick = onSingleTap,
                                 onLongClick = {
                                     if (bookId.isNotBlank() && trimmed.isNotBlank()) {
                                         onHighlightToggle(bookId, bookTitle, currentPage, trimmed, highlightColor.value.toLong())
@@ -749,18 +781,24 @@ private fun VerticalContent(
     textAlignment: String = "Justify",
     searchQuery: String = "",
     highlightColor: Color = Color.Transparent,
+    onSingleTap: () -> Unit,
     onHighlightToggle: (bookId: String, bookTitle: String, pageNumber: Int, text: String, color: Long) -> Unit = { _, _, _, _, _ -> },
     bookId: String = "",
     bookTitle: String = "",
     pageHighlights: Set<String> = emptySet(),
 ) {
-    LazyColumn(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(start = marginDp.dp, end = marginDp.dp, top = 16.dp, bottom = 16.dp),
-        state = state,
-        userScrollEnabled = true,
+            .clickable(onClick = onSingleTap),
     ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = marginDp.dp, end = marginDp.dp, top = 16.dp, bottom = 16.dp),
+            state = state,
+            userScrollEnabled = true,
+        ) {
         itemsIndexed(pages) { pageIndex, pageContent ->
             Column(
                 modifier = Modifier
@@ -789,7 +827,7 @@ private fun VerticalContent(
                             color = scheme.textColor,
                             textAlign = readerTextAlign(textAlignment),
                             modifier = Modifier.combinedClickable(
-                                onClick = {},
+                                onClick = onSingleTap,
                                 onLongClick = {
                                     if (bookId.isNotBlank() && trimmed.isNotBlank()) {
                                         onHighlightToggle(bookId, bookTitle, pageNumber, trimmed, highlightColor.value.toLong())
@@ -805,6 +843,7 @@ private fun VerticalContent(
                     color = scheme.dividerColor.copy(alpha = 0.5f),
                 )
                 Spacer(Modifier.height(12.dp))
+            }
             }
         }
     }
@@ -911,6 +950,7 @@ private fun BottomReaderNavBar(
     onSliderDragFinished: () -> Unit,
 ) {
     val navBarPadding = WindowInsets.navigationBars.asPaddingValues()
+    val safeTotalPages = totalPages.coerceAtLeast(1)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -928,7 +968,7 @@ private fun BottomReaderNavBar(
                 .height(48.dp),
         ) {
             Text(
-                text = "$currentPage/$totalPages",
+                text = "Page ${currentPage.coerceIn(1, safeTotalPages)} of $safeTotalPages",
                 color = WhiteText,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
@@ -952,28 +992,64 @@ private fun BottomReaderNavBar(
 
         Spacer(Modifier.height(2.dp))
 
-        Slider(
-            value = sliderPosition,
-            onValueChange = onSliderDrag,
-            onValueChangeFinished = onSliderDragFinished,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            colors = SliderDefaults.colors(
-                thumbColor = ReaderProgressThumbColor,
-                activeTrackColor = Color.Transparent,
-                inactiveTrackColor = Color.Transparent,
-            ),
-            thumb = {
-                Box(
-                    modifier = Modifier
-                        .size(12.dp)
-                        .clip(CircleShape)
-                        .background(ReaderProgressThumbColor),
-                )
-            },
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "1",
+                color = WhiteText.copy(alpha = 0.7f),
+                fontSize = 11.sp,
+            )
+            Slider(
+                value = sliderPosition.coerceIn(0f, 1f),
+                onValueChange = { onSliderDrag(it.coerceIn(0f, 1f)) },
+                onValueChangeFinished = onSliderDragFinished,
+                enabled = safeTotalPages > 1,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 8.dp)
+                    .semantics {
+                        contentDescription = "Page ${currentPage.coerceIn(1, safeTotalPages)} of $safeTotalPages"
+                    },
+                colors = SliderDefaults.colors(
+                    thumbColor = ReaderProgressThumbColor,
+                    activeTrackColor = ReaderProgressTrackColor,
+                    inactiveTrackColor = ReaderProgressInactiveTrackColor,
+                    disabledThumbColor = ReaderProgressThumbColor.copy(alpha = 0.5f),
+                    disabledActiveTrackColor = ReaderProgressTrackColor.copy(alpha = 0.5f),
+                    disabledInactiveTrackColor = ReaderProgressInactiveTrackColor.copy(alpha = 0.5f),
+                ),
+                thumb = {
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(ReaderProgressThumbColor),
+                    )
+                },
+            )
+            Text(
+                text = safeTotalPages.toString(),
+                color = WhiteText.copy(alpha = 0.7f),
+                fontSize = 11.sp,
+            )
+        }
     }
+}
+
+internal fun pageToSliderPosition(currentPage: Int, totalPages: Int): Float {
+    if (totalPages <= 1) return 0f
+    return ((currentPage.coerceIn(1, totalPages) - 1).toFloat() / (totalPages - 1).toFloat())
+        .coerceIn(0f, 1f)
+}
+
+internal fun sliderToPage(sliderPosition: Float, totalPages: Int): Int {
+    if (totalPages <= 1) return 1
+    return (sliderPosition.coerceIn(0f, 1f) * (totalPages - 1))
+        .toInt()
+        .plus(1)
+        .coerceIn(1, totalPages)
 }
 
 @Composable
