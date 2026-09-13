@@ -13,6 +13,16 @@ class PdfFileResolver(private val context: Context) {
     }
 
     fun resolve(uri: Uri): ParcelFileDescriptor {
+        if (uri.scheme == null || uri.scheme == "file") {
+            val path = uri.path ?: uri.toString()
+            val file = java.io.File(path)
+            if (file.exists() && file.isFile) {
+                if (file.length() > MAX_FILE_SIZE_BYTES) {
+                    throw PdfFileTooLargeException(MAX_FILE_SIZE_BYTES)
+                }
+                return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            }
+        }
         val fd = context.contentResolver.openFileDescriptor(uri, "r")
             ?: throw FileNotFoundException("Could not open file: $uri")
         if (fd.statSize > MAX_FILE_SIZE_BYTES) {

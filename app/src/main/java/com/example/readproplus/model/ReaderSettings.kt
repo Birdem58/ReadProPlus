@@ -5,7 +5,7 @@ data class ReaderSettings(
     val lineSpacingMultiplier: Float = 1.5f,
     val fontFamily: String = "Sans-Serif",
     val alignment: String = "Justify",
-    val renderMode: String = "TEXT_REFLOW",
-    val scrollMode: String = "PAGED",
+    val renderMode: String = "PAGE_IMAGE",
+    val scrollMode: String = "VERTICAL",
     val readingMode: String = "SEPIA",
 )

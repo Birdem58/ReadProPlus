@@ -20,7 +20,6 @@ import com.example.readproplus.tts.KokoroTokenizer
 import com.example.readproplus.tts.ModelManager
 import com.example.readproplus.tts.PiperEngine
 import com.example.readproplus.tts.PiperModelManager
-import com.example.readproplus.tts.SystemTtsReader
 import com.example.readproplus.tts.TtsPlaybackService
 import com.example.readproplus.tts.VoiceManager
 import com.example.readproplus.tts.VoiceDownloadProgress
@@ -47,7 +46,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
     private val currentConfig = MutableStateFlow(TtsConfig())
     private val engine = KokoroEngine(inference, tokenizer, voiceManager, currentConfig.value)
     private val piperEngine = PiperEngine(application, piperModelManager, currentConfig.value)
-    private val systemTts = SystemTtsReader(application)
 
     private val _ttsState = MutableStateFlow<TtsState>(TtsState.Idle)
     val ttsState: StateFlow<TtsState> = _ttsState.asStateFlow()
@@ -89,14 +87,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
         viewModelScope.launch {
-            systemTts.state.collect { state ->
-                if (activeBackend == ReaderBackend.SYSTEM) {
-                    _ttsState.value = state
-                    TtsPlaybackService.update(getApplication(), state)
-                }
-            }
-        }
-        viewModelScope.launch {
             runCatching {
                 val storedVoice = TtsVoice.fromId(preferences.voiceId.first())
                 val restoredVoice = withContext(Dispatchers.IO) {
@@ -111,8 +101,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
                 _volume.value = config.volume
                 _selectedVoice.value = restoredVoice
                 engine.updateConfig(config)
-                systemTts.setSpeed(config.speed)
-                systemTts.setVolume(config.volume)
                 if (storedVoice.id != restoredVoice.id) {
                     preferences.setVoiceId(restoredVoice.id)
                 }
@@ -128,7 +116,7 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             if (!hasUsableSelectedVoiceAssets() || !ensureNeuralEngine()) {
                 _ttsState.value = TtsState.Error(
-                    "The selected neural voice could not start. Use the reader button to continue with the device voice.",
+                    "The selected neural TTS engine could not start. Android system TTS was not used.",
                     recoverable = true,
                 )
             }
@@ -175,7 +163,7 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
             val selectedVoice = _selectedVoice.value
             val canUseNeuralVoice = hasUsableSelectedVoiceAssets() && ensureNeuralEngine()
             if (!canUseNeuralVoice) {
-                startSystemReading(pagesForSpeech, safeStartPage - 1, safeEndPage - 1)
+                reportNeuralFailure(selectedVoice, null)
                 return@launch
             }
 
@@ -222,13 +210,12 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
                     TtsBackend.PIPER -> piperEngine.engineState.value
                 }
                 if (engineState is EngineState.Error) {
-                    startSystemReading(pagesForSpeech, safeStartPage - 1, safeEndPage - 1)
-                    }
+                    reportNeuralFailure(selectedVoice, IllegalStateException(engineState.message))
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                Log.w(TAG, "${selectedVoice.engineLabel} playback failed; using the device voice instead", error)
-                startSystemReading(pagesForSpeech, safeStartPage - 1, safeEndPage - 1)
+                reportNeuralFailure(selectedVoice, error)
             }
         }
     }
@@ -290,7 +277,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         when (activeBackend) {
             ReaderBackend.KOKORO -> viewModelScope.launch { engine.pause() }
             ReaderBackend.PIPER -> viewModelScope.launch { piperEngine.pause() }
-            ReaderBackend.SYSTEM -> systemTts.pause()
             ReaderBackend.NONE -> Unit
         }
     }
@@ -299,9 +285,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         when (activeBackend) {
             ReaderBackend.KOKORO -> viewModelScope.launch { engine.resume() }
             ReaderBackend.PIPER -> viewModelScope.launch { piperEngine.resume() }
-            ReaderBackend.SYSTEM -> systemTts.resume().exceptionOrNull()?.let { error ->
-                _ttsState.value = TtsState.Error(error.message ?: "Could not resume device text-to-speech.", true)
-            }
             ReaderBackend.NONE -> Unit
         }
     }
@@ -310,9 +293,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         when (activeBackend) {
             ReaderBackend.KOKORO -> viewModelScope.launch { engine.seekTo(progress) }
             ReaderBackend.PIPER -> viewModelScope.launch { piperEngine.seekTo(progress) }
-            ReaderBackend.SYSTEM -> systemTts.seekTo(progress).exceptionOrNull()?.let { error ->
-                _ttsState.value = TtsState.Error(error.message ?: "Could not seek device text-to-speech.", true)
-            }
             ReaderBackend.NONE -> Unit
         }
     }
@@ -322,7 +302,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         when (activeBackend) {
             ReaderBackend.KOKORO -> viewModelScope.launch { engine.stop() }
             ReaderBackend.PIPER -> viewModelScope.launch { piperEngine.stop() }
-            ReaderBackend.SYSTEM -> systemTts.stop()
             ReaderBackend.NONE -> Unit
         }
         TtsPlaybackService.stop(getApplication())
@@ -336,7 +315,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         currentConfig.value = updated
         engine.updateConfig(updated)
         piperEngine.updateConfig(updated)
-        systemTts.setSpeed(updated.speed)
         viewModelScope.launch { preferences.setSpeed(updated.speed) }
     }
 
@@ -347,7 +325,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         _volume.value = updated.volume
         engine.updateConfig(updated)
         piperEngine.updateConfig(updated)
-        systemTts.setVolume(updated.volume)
         volumeSaveJob?.cancel()
         volumeSaveJob = viewModelScope.launch {
             delay(VOLUME_SAVE_DEBOUNCE_MS)
@@ -368,7 +345,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun dismissError() {
         if (_ttsState.value is TtsState.Error) {
-            systemTts.stop()
             activeBackend = ReaderBackend.NONE
             _ttsState.value = TtsState.Idle
         }
@@ -378,7 +354,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         speakingJob?.cancel()
         voiceDownloadJob?.cancel()
         volumeSaveJob?.cancel()
-        systemTts.shutdown()
         engine.release()
         piperEngine.release()
         TtsPlaybackService.stop(getApplication())
@@ -468,21 +443,19 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private suspend fun startSystemReading(
-        pages: List<String>,
-        startPageIndex: Int,
-        endPageIndex: Int,
-    ) {
-        activeBackend = ReaderBackend.SYSTEM
-        systemTts.startReading(pages, startPageIndex, endPageIndex)
-            .exceptionOrNull()
-            ?.let { error ->
-                activeBackend = ReaderBackend.NONE
-                _ttsState.value = TtsState.Error(
-                    "No text-to-speech engine could start: ${error.message}",
-                    recoverable = true,
-                )
-            }
+    private fun reportNeuralFailure(voice: TtsVoice, error: Throwable?) {
+        if (error != null) {
+            Log.e(TAG, "${voice.engineLabel} playback failed; system TTS fallback is disabled", error)
+        } else {
+            Log.e(TAG, "${voice.engineLabel} could not be initialized; system TTS fallback is disabled")
+        }
+        TtsPlaybackService.stop(getApplication())
+        activeBackend = ReaderBackend.NONE
+        val detail = error?.message?.takeIf { it.isNotBlank() }
+        _ttsState.value = TtsState.Error(
+            "${voice.displayName} neural TTS could not start${detail?.let { ": $it" } ?: ". Android system TTS was not used."}",
+            recoverable = true,
+        )
     }
 
     private fun mapEngineStateToTtsState(engineState: EngineState): TtsState {
@@ -545,7 +518,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         if (_selectedVoice.value == voice && isEngineInitialized) return
 
         speakingJob?.cancel()
-        systemTts.stop()
         activeBackend = ReaderBackend.NONE
         engine.release()
         piperEngine.release()
@@ -575,7 +547,6 @@ class KokoroTtsViewModel(application: Application) : AndroidViewModel(applicatio
         NONE,
         KOKORO,
         PIPER,
-        SYSTEM,
     }
 
     private companion object {

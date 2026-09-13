@@ -14,8 +14,8 @@ class ReaderSettingsRepository(context: Context) {
             lineSpacingMultiplier = prefs.getFloat(KEY_LINE_SPACING, 1.5f),
             fontFamily = prefs.getString(KEY_FONT, "Sans-Serif") ?: "Sans-Serif",
             alignment = prefs.getString(KEY_ALIGNMENT, "Justify") ?: "Justify",
-            renderMode = prefs.getString(KEY_RENDER_MODE, "TEXT_REFLOW") ?: "TEXT_REFLOW",
-            scrollMode = prefs.getString(KEY_SCROLL_MODE, "PAGED") ?: "PAGED",
+            renderMode = prefs.getString(KEY_RENDER_MODE, "PAGE_IMAGE") ?: "PAGE_IMAGE",
+            scrollMode = prefs.getString(KEY_SCROLL_MODE, "VERTICAL") ?: "VERTICAL",
             readingMode = prefs.getString(KEY_READING_MODE, "SEPIA") ?: "SEPIA",
         )
     }

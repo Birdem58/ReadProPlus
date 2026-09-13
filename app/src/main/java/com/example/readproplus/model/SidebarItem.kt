@@ -18,12 +18,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 
 import androidx.compose.material.icons.filled.BarChart
 
+import androidx.compose.material.icons.filled.Headphones
+
 enum class SidebarSection(
     val label: String,
     val icon: ImageVector,
 ) {
     READING_NOW("Reading Now", Icons.Default.AutoStories),
     BOOKS_AND_DOCUMENTS("Books and Documents", Icons.AutoMirrored.Filled.LibraryBooks),
+    AUDIOBOOKS("Audiobooks", Icons.Default.Headphones),
     FAVORITES("Favorites", Icons.Default.Favorite),
     TO_READ("To Read", Icons.AutoMirrored.Filled.PlaylistAddCheck),
     HAVE_READ("Have Read", Icons.AutoMirrored.Filled.MenuBook),

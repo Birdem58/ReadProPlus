@@ -974,7 +974,7 @@ fun SettingsScreen(
             }
             item {
                 SettingsSection("TTS (Text-to-Speech)", listOf(
-                    "TTS Engine" to "Kokoro, Piper, or System TTS",
+                    "TTS Engine" to "Kokoro or Piper neural voice",
                     "Speech Speed" to "Adjust reading speed",
                     "Default Voice" to "${selectedTtsVoice.displayName} (${selectedTtsVoice.engineLabel})",
                     "Volume" to "Adjust TTS volume",

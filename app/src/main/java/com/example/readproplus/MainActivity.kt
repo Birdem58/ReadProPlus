@@ -11,7 +11,6 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
@@ -27,7 +26,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.readproplus.model.ReadingMode
 import com.example.readproplus.model.ScrollMode
@@ -57,10 +55,16 @@ import com.example.readproplus.ui.screens.SettingsScreen
 import com.example.readproplus.ui.screens.ToReadScreen
 import com.example.readproplus.ui.screens.TrashScreen
 import com.example.readproplus.ui.theme.ReadProPlusTheme
+import com.example.readproplus.ui.theme.ReadProPalette
 import com.example.readproplus.ui.theme.readerColorScheme
 import com.example.readproplus.ui.viewmodel.KokoroTtsViewModel
 import com.example.readproplus.ui.viewmodel.PdfExtractorViewModel
 import com.example.readproplus.ui.viewmodel.SidebarViewModel
+import com.example.readproplus.ui.screens.AudiobooksShelfScreen
+import com.example.readproplus.ui.screens.AudioPlayerScreen
+import com.example.readproplus.ui.components.MiniAudioPlayer
+import com.example.readproplus.ui.components.AddAudiobookDialog
+import com.example.readproplus.ui.viewmodel.AudiobookViewModel
 import com.example.readproplus.tts.VoiceDownloadProgress
 import kotlinx.coroutines.launch
 
@@ -78,15 +82,15 @@ class MainActivity : ComponentActivity() {
             }
 
             if (!showMainContent) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFFFBF0D9)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    androidx.compose.material3.Text(
-                        text = "Loading library...",
-                        color = Color(0xFF3E2C1A),
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(ReadProPalette.background),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        androidx.compose.material3.Text(
+                            text = "Kitaplık yükleniyor…",
+                            color = ReadProPalette.primaryDeep,
                     )
                 }
             } else {
@@ -128,6 +132,12 @@ class MainActivity : ComponentActivity() {
             val scheme = readerColorScheme(readingMode)
             val drawerState = rememberDrawerState(DrawerValue.Closed)
             val scope = rememberCoroutineScope()
+
+            val audiobookViewModel: AudiobookViewModel = viewModel()
+            val audiobooks by audiobookViewModel.audiobooks.collectAsState()
+            val audiobookPlaybackState by audiobookViewModel.playbackState.collectAsState()
+            var showAddAudiobookDialog by remember { mutableStateOf(false) }
+            var addAudiobookPreselectedBook by remember { mutableStateOf<PdfDocument?>(null) }
 
             val selectedDocument by viewModel.selectedDocument.collectAsState()
             val allHighlights by viewModel.highlights.collectAsState()
@@ -181,8 +191,7 @@ class MainActivity : ComponentActivity() {
             }
 
             ReadProPlusTheme(
-                darkTheme = readingMode in setOf(ReadingMode.DARK, ReadingMode.OLED_DARK, ReadingMode.NIGHT_BLUE) ||
-                    isSystemInDarkTheme(),
+                darkTheme = readingMode in setOf(ReadingMode.DARK, ReadingMode.OLED_DARK, ReadingMode.NIGHT_BLUE),
             ) {
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -192,13 +201,10 @@ class MainActivity : ComponentActivity() {
                                 currentSection = sidebarSection,
                                 onSectionSelected = { section ->
                                     sidebarSection = section
-                                    currentScreen = if (section == SidebarSection.BOOKS_AND_DOCUMENTS) {
-                                        // Books and Documents is the library entry point. Keep it on the
-                                        // same screen as the home page so the layout and view modes cannot
-                                        // drift apart between the two navigation paths.
-                                        Screen.Library
-                                    } else {
-                                        Screen.SidebarScreen(section)
+                                    currentScreen = when (section) {
+                                        SidebarSection.BOOKS_AND_DOCUMENTS -> Screen.Library
+                                        SidebarSection.AUDIOBOOKS -> Screen.AudiobooksShelf
+                                        else -> Screen.SidebarScreen(section)
                                     }
                                     scope.launch { drawerState.close() }
                                 },
@@ -301,10 +307,24 @@ class MainActivity : ComponentActivity() {
                                      onTtsSeek = { progress -> ttsViewModel?.seekTo(progress) },
                                      onTtsSpeedClick = { },
                                      onTtsDismiss = { ttsViewModel?.stopReading() },
-                                     onTtsSpeedSelected = { speed -> ttsViewModel?.setSpeed(speed) },
-                                     onTtsVolumeChanged = { volume -> ttsViewModel?.setVolume(volume) },
-                                     onTtsVoiceSelected = { voice -> ttsViewModel?.selectVoice(voice) },
-                                )
+                                      onTtsSpeedSelected = { speed -> ttsViewModel?.setSpeed(speed) },
+                                      onTtsVolumeChanged = { volume -> ttsViewModel?.setVolume(volume) },
+                                      onTtsVoiceSelected = { voice -> ttsViewModel?.selectVoice(voice) },
+                                      onAudioModeClick = {
+                                          val existing = selectedDocument?.let { audiobookViewModel.getAudiobookByBookId(it.id) }
+                                          if (existing != null && existing.isPlayable) {
+                                              audiobookViewModel.playAudiobook(existing)
+                                              sidebarSection = SidebarSection.AUDIOBOOKS
+                                              currentScreen = Screen.AudioPlayer
+                                          } else {
+                                              addAudiobookPreselectedBook = selectedDocument
+                                              showAddAudiobookDialog = true
+                                          }
+                                      },
+                                       audiobookCurrentPage = if (audiobookPlaybackState.audiobook?.bookId == selectedDocument?.id) {
+                                           audiobookPlaybackState.currentPage
+                                       } else null,
+                                 )
                                 if (selectedDocument != null) {
                                     androidx.compose.runtime.LaunchedEffect(currentPage, selectedDocument?.id) {
                                         val doc = selectedDocument ?: return@LaunchedEffect
@@ -377,6 +397,83 @@ class MainActivity : ComponentActivity() {
                                     onMenuClick = { scope.launch { drawerState.open() } },
                                 )
                             }
+                            is Screen.AudiobooksShelf -> {
+                                AudiobooksShelfScreen(
+                                    audiobooks = audiobooks,
+                                    onMenuClick = { scope.launch { drawerState.open() } },
+                                    onAddAudiobookClick = {
+                                        addAudiobookPreselectedBook = null
+                                        showAddAudiobookDialog = true
+                                    },
+                                    onAudiobookClick = { book ->
+                                        if (book.isPlayable) {
+                                            audiobookViewModel.playAudiobook(book)
+                                            currentScreen = Screen.AudioPlayer
+                                        }
+                                    },
+                                    onPlayClick = { book ->
+                                        audiobookViewModel.playAudiobook(book)
+                                    },
+                                    onResumeProcessing = { book ->
+                                        audiobookViewModel.resumeProcessing(book.id)
+                                    },
+                                    onPauseProcessing = { book ->
+                                        audiobookViewModel.pauseProcessing(book.id)
+                                    },
+                                    onDeleteAudiobook = { book ->
+                                        audiobookViewModel.deleteAudiobook(book.id)
+                                    },
+                                )
+                            }
+                            is Screen.AudioPlayer -> {
+                                AudioPlayerScreen(
+                                    playbackState = audiobookPlaybackState,
+                                    onCollapse = {
+                                        sidebarSection = SidebarSection.AUDIOBOOKS
+                                        currentScreen = Screen.AudiobooksShelf
+                                    },
+                                    onPlayPause = { audiobookViewModel.togglePlayPause() },
+                                    onSeek = { audiobookViewModel.seekTo(it) },
+                                    onSkipForward15 = { audiobookViewModel.skipForward15() },
+                                    onSkipBackward15 = { audiobookViewModel.skipBackward15() },
+                                    onSpeedChange = { audiobookViewModel.setSpeed(it) },
+                                    onSleepTimerChange = { audiobookViewModel.setSleepTimer(it) },
+                                    onSleepTimerEndOfPage = { audiobookViewModel.setSleepTimerEndOfPage() },
+                                    onSeekToPage = { audiobookViewModel.seekToPage(it) },
+                                )
+                            }
+                        }
+
+                        if (audiobookPlaybackState.audiobook != null && currentScreen !is Screen.AudioPlayer) {
+                            MiniAudioPlayer(
+                                playbackState = audiobookPlaybackState,
+                                onClick = { currentScreen = Screen.AudioPlayer },
+                                onPlayPause = { audiobookViewModel.togglePlayPause() },
+                                onSkipForward15 = { audiobookViewModel.skipForward15() },
+                                modifier = Modifier.align(Alignment.BottomCenter),
+                            )
+                        }
+
+                        if (showAddAudiobookDialog) {
+                            AddAudiobookDialog(
+                                availableBooks = activeBooks,
+                                preselectedBook = addAudiobookPreselectedBook,
+                                initialStartPage = if (currentScreen is Screen.Reader) currentPage else 1,
+                                initialVoice = selectedTtsVoice,
+                                onDismiss = {
+                                    showAddAudiobookDialog = false
+                                    addAudiobookPreselectedBook = null
+                                },
+                                onConfirm = { book, voice, startPage, endPage, mainTextOnly ->
+                                    showAddAudiobookDialog = false
+                                    addAudiobookPreselectedBook = null
+                                    audiobookViewModel.createAndStartAudiobook(book, voice, startPage, endPage, mainTextOnly)
+                                    if (currentScreen !is Screen.Reader) {
+                                        currentScreen = Screen.AudiobooksShelf
+                                        sidebarSection = SidebarSection.AUDIOBOOKS
+                                    }
+                                },
+                            )
                         }
 
                         if (ttsState is TtsState.ModelDownloading) {
@@ -401,6 +498,8 @@ sealed class Screen {
     data object Library : Screen()
     data object Reader : Screen()
     data object Citations : Screen()
+    data object AudiobooksShelf : Screen()
+    data object AudioPlayer : Screen()
     data class SidebarScreen(val section: SidebarSection) : Screen()
 }
 
@@ -448,6 +547,9 @@ private fun SidebarSectionContent(
                 onBookClick = onBookClick,
                 onMenuClick = onMenuClick,
             )
+        }
+        SidebarSection.AUDIOBOOKS -> {
+            // Handled via Screen.AudiobooksShelf directly
         }
         SidebarSection.FAVORITES -> {
             FavoritesScreen(
@@ -533,6 +635,7 @@ private fun SidebarSectionContent(
 
             com.example.readproplus.ui.screens.ReadingStatsScreen(
                 stats = statsRepo.getStats(),
+                readingProgress = readingProgress,
                 scheme = scheme,
                 onMenuClick = onMenuClick,
                 onExportClick = {

@@ -148,6 +148,35 @@ class KokoroEngine(
         startSpeakingRange(listOf(text), 0, 0)
     }
 
+    suspend fun synthesizeTextToSamples(text: String): ShortArray {
+        check(isReady()) { "Model not loaded. Call loadModel() first." }
+        require(voiceEmbedding.isNotEmpty()) { "Voice not initialized" }
+        val sentences = splitSentences(text)
+        if (sentences.isEmpty()) return ShortArray(0)
+        val allSamples = mutableListOf<ShortArray>()
+        var totalCount = 0
+        for (sentence in sentences) {
+            try {
+                val segment = generateAudioSegment(sentence)
+                if (segment.samples.isNotEmpty()) {
+                    allSamples.add(segment.samples)
+                    totalCount += segment.samples.size
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.w(TAG, "Kokoro sentence synthesis failed for '$sentence'", e)
+            }
+        }
+        val result = ShortArray(totalCount)
+        var offset = 0
+        for (chunk in allSamples) {
+            chunk.copyInto(result, offset)
+            offset += chunk.size
+        }
+        return result
+    }
+
     suspend fun playSamples(samples: ShortArray) = coroutineScope {
         require(samples.isNotEmpty()) { "Cannot play empty audio." }
         currentJob?.cancel()

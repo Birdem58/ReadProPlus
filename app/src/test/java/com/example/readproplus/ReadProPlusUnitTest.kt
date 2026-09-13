@@ -45,4 +45,36 @@ class ReadProPlusUnitTest {
         assertTrue(markdown.contains("Sample highlight text"))
         assertTrue(markdown.contains("My custom note"))
     }
+
+    @Test
+    fun testAudiobookModelAndPlaybackStatePageNumbering() {
+        val book = com.example.readproplus.model.audiobook.Audiobook(
+            id = "ab1",
+            bookId = "book1",
+            title = "Test Audiobook",
+            voiceId = "piper_tr_TR_dfki_medium",
+            voiceName = "DFKI",
+            startPage = 1,
+            endPage = 11,
+            totalPages = 11,
+            currentPageIndex = 7,
+            sourceUri = "content://media/external/file/123",
+            filePath = "/storage/emulated/0/Books/PixelCNN.pdf",
+            mainTextOnly = true,
+        )
+
+        assertEquals(7, book.currentPage)
+        assertEquals("content://media/external/file/123", book.sourceUri)
+        assertEquals("/storage/emulated/0/Books/PixelCNN.pdf", book.filePath)
+        assertTrue(book.mainTextOnly)
+
+        val state = com.example.readproplus.tts.AudiobookPlaybackState(
+            audiobook = book,
+            currentPageIndex = 7,
+            totalDurationMs = 120_000L,
+            currentPositionMs = 45_000L,
+        )
+
+        assertEquals(7, state.currentPage)
+    }
 }

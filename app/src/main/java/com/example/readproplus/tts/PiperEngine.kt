@@ -160,6 +160,34 @@ class PiperEngine(
         audioPlayer.seekTo(progress)
     }
 
+    suspend fun synthesizeTextToSamples(text: String): ShortArray {
+        check(isReady()) { "Piper model is not loaded. Call initialize() first." }
+        val sentences = splitSentences(text)
+        if (sentences.isEmpty()) return ShortArray(0)
+        val allSamples = mutableListOf<ShortArray>()
+        var totalCount = 0
+        for (sentence in sentences) {
+            try {
+                val segment = generateAudioSegment(sentence)
+                if (segment.samples.isNotEmpty()) {
+                    allSamples.add(segment.samples)
+                    totalCount += segment.samples.size
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Log.w(TAG, "Failed to synthesize sentence: '$sentence'", e)
+            }
+        }
+        val result = ShortArray(totalCount)
+        var offset = 0
+        for (chunk in allSamples) {
+            chunk.copyInto(result, offset)
+            offset += chunk.size
+        }
+        return result
+    }
+
     suspend fun stop() {
         currentJob?.cancel()
         currentJob = null

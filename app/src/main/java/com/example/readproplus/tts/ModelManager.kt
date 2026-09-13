@@ -41,7 +41,7 @@ class ModelManager(private val context: Context) {
         try {
             val assetList = context.assets.list("") ?: emptyArray()
             if (MODEL_FILENAME in assetList) {
-                copyAssetToInternalStorage()
+                copyAssetToInternalStorage(replaceExisting = true)
                 return@withContext modelFile.exists() && modelFile.length() > 10_000_000L && verifyChecksum(modelFile)
             }
         } catch (e: Exception) {
@@ -64,11 +64,12 @@ class ModelManager(private val context: Context) {
             val assetList = context.assets.list("") ?: emptyArray()
             if (MODEL_FILENAME in assetList) {
                 emit(DownloadProgress.Downloading(0.5f, 0L, 300_000_000L))
-                copyAssetToInternalStorage()
-                if (modelFile.exists()) {
+                copyAssetToInternalStorage(replaceExisting = true)
+                if (modelFile.exists() && verifyChecksum(modelFile)) {
                     emit(DownloadProgress.Complete(modelFile.absolutePath))
                     return@flow
                 }
+                throw IOException("Bundled Kokoro model could not be installed.")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Bundled asset extraction failed, falling back to HTTP download", e)
@@ -185,7 +186,7 @@ class ModelManager(private val context: Context) {
         }
     }
 
-    private fun copyAssetToInternalStorage() {
+    private fun copyAssetToInternalStorage(replaceExisting: Boolean) {
         try {
             context.assets.open(MODEL_FILENAME).use { input ->
                 FileOutputStream(tempFile).use { output ->
@@ -193,12 +194,21 @@ class ModelManager(private val context: Context) {
                 }
             }
             if (tempFile.exists() && tempFile.length() > 10_000_000L) {
-                tempFile.renameTo(modelFile)
+                if (replaceExisting) {
+                    modelFile.delete()
+                }
+                if (!tempFile.renameTo(modelFile)) {
+                    tempFile.copyTo(modelFile, overwrite = replaceExisting)
+                    tempFile.delete()
+                }
                 Log.i(TAG, "Successfully extracted bundled model asset to ${modelFile.absolutePath}")
+            } else {
+                throw IOException("Bundled Kokoro model asset is incomplete.")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to extract bundled model asset", e)
             tempFile.delete()
+            throw e
         }
     }
 }

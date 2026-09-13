@@ -25,7 +25,9 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            // Samsung Galaxy S20 FE uses ARM; do not ship the incompatible
+            // x86_64 DjVu binaries in this device-targeted APK.
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
     }
 

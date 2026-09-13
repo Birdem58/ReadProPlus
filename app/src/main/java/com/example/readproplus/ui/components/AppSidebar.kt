@@ -17,8 +17,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -43,15 +45,43 @@ fun AppSidebar(
             .fillMaxHeight()
             .width(300.dp)
             .background(scheme.surfaceColor)
-            .padding(top = 48.dp, bottom = 16.dp),
+            .padding(top = 20.dp, bottom = 16.dp),
     ) {
-        Text(
-            text = "ReadProPlus",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = scheme.accentColor,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                color = scheme.accentColor,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.size(38.dp),
+            ) {
+                androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                        contentDescription = null,
+                        tint = scheme.background,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text(
+                    text = "ReadPro+",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = scheme.navigationContent,
+                )
+                Text(
+                    text = "KÜTÜPHANE",
+                    color = scheme.pageNumberColor,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp,
+                )
+            }
+        }
 
         HorizontalDivider(
             color = scheme.dividerColor.copy(alpha = 0.5f),
@@ -64,6 +94,14 @@ fun AppSidebar(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 8.dp),
         ) {
+            Text(
+                text = "YOUR SPACE",
+                color = scheme.pageNumberColor,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.2.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
             SidebarSection.entries.forEach { section ->
                 SidebarItem(
                     section = section,

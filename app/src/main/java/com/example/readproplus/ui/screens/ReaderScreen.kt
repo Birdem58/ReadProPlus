@@ -56,6 +56,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -99,26 +100,19 @@ import com.example.readproplus.model.tts.GeneratedAudio
 import com.example.readproplus.model.tts.TtsState
 import com.example.readproplus.model.tts.TtsVoice
 import com.example.readproplus.tts.VoiceDownloadProgress
-import com.example.readproplus.ui.components.KokoroAudioDialog
 import com.example.readproplus.ui.components.NotesBookmarksSheet
 import com.example.readproplus.ui.components.PdfErrorBanner
 import com.example.readproplus.ui.components.ReaderSettingsSheet
-import com.example.readproplus.ui.components.SmartZoomableCanvas
 import com.example.readproplus.ui.components.TableOfContentsSheet
-import com.example.readproplus.ui.components.TtsControlBar
-import com.example.readproplus.ui.components.TtsSpeedDialog
 import com.example.readproplus.ui.components.VoicePickerSheet
 import com.example.readproplus.ui.theme.ReaderColorScheme
 import com.example.readproplus.ui.theme.readerColorScheme
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-private val DarkTeal = Color(0xFF006064)
-private val BlueHandle = Color(0xFF4FC3F7)
-private val ReaderProgressThumbColor = Color(0xFF9DEBF2)
-private val ReaderProgressTrackColor = Color(0xFF9DEBF2).copy(alpha = 0.28f)
-private val ReaderProgressInactiveTrackColor = Color.White.copy(alpha = 0.22f)
-private val WhiteText = Color(0xFFFFFFFF)
+import androidx.compose.material.icons.filled.Headphones
+import com.example.readproplus.ui.components.ReadEraPdfViewer
+import com.example.readproplus.ui.theme.ReadProPalette
 
 private val fontSizeOptions = listOf(14, 16, 18, 20, 22, 24, 28)
 
@@ -155,6 +149,8 @@ fun ReaderScreen(
     onTtsVoiceSelected: (TtsVoice) -> Unit = {},
     initialReaderSettings: ReaderSettings? = null,
     onReaderSettingsChanged: (ReaderSettings) -> Unit = {},
+    onAudioModeClick: () -> Unit = {},
+    audiobookCurrentPage: Int? = null,
 ) {
     val scheme = readerColorScheme(readingMode)
     val context = LocalContext.current
@@ -176,8 +172,6 @@ fun ReaderScreen(
     var isSearchActive by remember { mutableStateOf(false) }
     var currentMatchIndex by remember { mutableIntStateOf(0) }
     var showTocSheet by remember { mutableStateOf(false) }
-    var showKokoroAudioDialog by remember { mutableStateOf(false) }
-    var showTtsSpeedDialog by remember { mutableStateOf(false) }
     var showVoicePicker by remember { mutableStateOf(false) }
     var showReaderSettingsSheet by remember { mutableStateOf(false) }
     var showNotesSheet by remember { mutableStateOf(false) }
@@ -187,7 +181,6 @@ fun ReaderScreen(
     var notes by remember { mutableStateOf(emptyList<BookNote>()) }
 
     var mainTextOnly by rememberSaveable { mutableStateOf(true) }
-    var ttsCurrentSpeed by remember { mutableFloatStateOf(1.0f) }
     val searchFocusRequester = remember { FocusRequester() }
     val searchFocusManager = LocalFocusManager.current
     val verticalListState = remember(document?.id) { LazyListState() }
@@ -228,6 +221,12 @@ fun ReaderScreen(
     LaunchedEffect(currentPage, totalPages, scrollMode) {
         if (scrollMode != ScrollMode.VERTICAL) {
             sliderPosition = pageToSliderPosition(currentPage, totalPages)
+        }
+    }
+
+    LaunchedEffect(audiobookCurrentPage) {
+        if (audiobookCurrentPage != null && audiobookCurrentPage > 0 && audiobookCurrentPage <= totalPages && audiobookCurrentPage != currentPage) {
+            jumpToPageImmediately(audiobookCurrentPage)
         }
     }
 
@@ -295,6 +294,7 @@ fun ReaderScreen(
                         }
                     },
                     focusRequester = searchFocusRequester,
+                    scheme = scheme,
                 )
                 LaunchedEffect(isSearchActive) {
                     if (isSearchActive) searchFocusRequester.requestFocus()
@@ -302,6 +302,7 @@ fun ReaderScreen(
             } else if (isReaderChromeVisible) {
                 TopReaderBar(
                     bookTitle = bookTitle,
+                    scheme = scheme,
                     readingMode = readingMode,
                     onReadingModeChange = onReadingModeChange,
                     scrollMode = scrollMode,
@@ -310,7 +311,7 @@ fun ReaderScreen(
                     onSearchClick = { isSearchActive = true },
                     onTocClick = { showTocSheet = true },
                     onCitationsClick = onCitationsClick,
-                    onTtsStartClick = { showKokoroAudioDialog = true },
+                    onAudioModeClick = onAudioModeClick,
                     onVoiceClick = { showVoicePicker = true },
                     onNotesClick = { showNotesSheet = true },
                     onSettingsClick = { showReaderSettingsSheet = true },
@@ -348,14 +349,16 @@ fun ReaderScreen(
                     .background(scheme.background),
             ) {
                 if (isPageImageMode) {
-                    SmartZoomableCanvas(
-                        pageIndex = currentPage - 1,
+                    ReadEraPdfViewer(
                         document = document,
+                        currentPage = currentPage,
+                        scrollMode = scrollMode,
+                        readingMode = readingMode,
                         scheme = scheme,
-                        showControls = isReaderChromeVisible,
+                        onPageChanged = { newPage ->
+                            currentPage = newPage
+                        },
                         onSingleTap = { isReaderChromeVisible = !isReaderChromeVisible },
-                        onPreviousPage = { if (currentPage > 1) currentPage-- },
-                        onNextPage = { if (currentPage < totalPages) currentPage++ },
                     )
                 } else {
                     when (scrollMode) {
@@ -401,40 +404,12 @@ fun ReaderScreen(
                         )
                     }
                 }
-
-                if (isReaderChromeVisible) {
-                    EngelleButton(
-                        modifier = Modifier.align(Alignment.BottomEnd),
-                        onClick = { showKokoroAudioDialog = true },
-                    )
-                }
             }
 
             if (isReaderChromeVisible && ttsState is TtsState.Error) {
                 PdfErrorBanner(
                     message = ttsState.message,
                     visible = true,
-                    onDismiss = onTtsDismiss,
-                )
-            }
-
-            if (isReaderChromeVisible) {
-                TtsControlBar(
-                    ttsState = ttsState,
-                    volume = ttsVolume,
-                    onPlay = onTtsResume,
-                    onPause = onTtsPause,
-                    onStop = onTtsStop,
-                    onSeek = onTtsSeek,
-                    onSpeedClick = {
-                        ttsCurrentSpeed = when (ttsState) {
-                            is TtsState.Playing -> ttsState.speed
-                            is TtsState.Paused -> ttsState.speed
-                            else -> 1.0f
-                        }
-                        showTtsSpeedDialog = true
-                    },
-                    onVolumeChange = onTtsVolumeChanged,
                     onDismiss = onTtsDismiss,
                 )
             }
@@ -471,40 +446,11 @@ fun ReaderScreen(
             )
         }
 
-        if (showKokoroAudioDialog) {
-            KokoroAudioDialog(
-                totalPages = totalPages,
-                currentPage = currentPage,
-                mainTextOnly = mainTextOnly,
-                generatedAudios = generatedAudios,
-                onMainTextOnlyChange = { mainTextOnly = it },
-                onGenerate = { startPage, endPage, mainTextOnlyValue ->
-                    showKokoroAudioDialog = false
-                    onTtsPageRangeStart(startPage, endPage, mainTextOnlyValue)
-                },
-                onPlay = onGeneratedAudioPlay,
-                onDelete = onGeneratedAudioDelete,
-                onDismiss = { showKokoroAudioDialog = false },
-            )
-        }
-
         if (brightness < 1f) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 1f - brightness)),
-            )
-        }
-
-        if (showTtsSpeedDialog) {
-            TtsSpeedDialog(
-                currentSpeed = ttsCurrentSpeed,
-                onSpeedSelected = { speed ->
-                    ttsCurrentSpeed = speed
-                    onTtsSpeedSelected(speed)
-                    showTtsSpeedDialog = false
-                },
-                onDismiss = { showTtsSpeedDialog = false },
             )
         }
 
@@ -572,6 +518,7 @@ fun ReaderScreen(
 @Composable
 private fun TopReaderBar(
     bookTitle: String,
+    scheme: ReaderColorScheme,
     readingMode: ReadingMode,
     onReadingModeChange: (ReadingMode) -> Unit,
     scrollMode: ScrollMode,
@@ -580,19 +527,29 @@ private fun TopReaderBar(
     onSearchClick: () -> Unit = {},
     onTocClick: () -> Unit = {},
     onCitationsClick: () -> Unit = {},
-    onTtsStartClick: () -> Unit = {},
+    onAudioModeClick: () -> Unit = {},
     onVoiceClick: () -> Unit = {},
     onNotesClick: () -> Unit = {},
     onSettingsClick: () -> Unit = {},
     isBookmarked: Boolean = false,
     onBookmarkToggle: () -> Unit = {},
 ) {
-    var showSettingsMenu by remember { mutableStateOf(false) }
+    var showMoreMenu by remember { mutableStateOf(false) }
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
+    val toolbarColor = if (readingMode in setOf(ReadingMode.DARK, ReadingMode.OLED_DARK, ReadingMode.NIGHT_BLUE)) {
+        scheme.surfaceColor
+    } else {
+        ReadProPalette.primaryDeep
+    }
+    val toolbarContent = if (readingMode in setOf(ReadingMode.DARK, ReadingMode.OLED_DARK, ReadingMode.NIGHT_BLUE)) {
+        scheme.textColor
+    } else {
+        Color.White
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(DarkTeal)
+            .background(toolbarColor)
             .padding(top = statusBarPadding.calculateTopPadding()),
     ) {
         Row(
@@ -602,7 +559,7 @@ private fun TopReaderBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBackClick) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = WhiteText)
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Geri", tint = toolbarContent)
             }
 
             Spacer(Modifier.weight(1f))
@@ -610,29 +567,72 @@ private fun TopReaderBar(
             IconButton(onClick = onBookmarkToggle) {
                 Icon(
                     imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                    contentDescription = "Bookmark",
-                    tint = if (isBookmarked) Color(0xFFFFD54F) else WhiteText,
+                    contentDescription = "Yer imi",
+                    tint = if (isBookmarked) Color(0xFFFFD54F) else toolbarContent,
                 )
             }
 
             IconButton(onClick = onNotesClick) {
-                Icon(Icons.Default.PushPin, contentDescription = "Notes", tint = WhiteText)
+                Icon(Icons.Default.PushPin, contentDescription = "Notlar", tint = toolbarContent)
             }
 
-            IconButton(onClick = onTtsStartClick) {
-                Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Text to Speech", tint = WhiteText)
+            IconButton(onClick = onAudioModeClick) {
+                Icon(Icons.Default.Headphones, contentDescription = "Sesli kitap", tint = toolbarContent)
             }
 
             IconButton(onClick = onSearchClick) {
-                Icon(Icons.Default.Search, contentDescription = "Search", tint = WhiteText)
+                Icon(Icons.Default.Search, contentDescription = "Ara", tint = toolbarContent)
             }
 
-            IconButton(onClick = onTocClick) {
-                Icon(Icons.AutoMirrored.Filled.Article, contentDescription = "Table of Contents", tint = WhiteText)
-            }
-
-            IconButton(onClick = onSettingsClick) {
-                Icon(Icons.Default.Settings, contentDescription = "Layout Settings", tint = WhiteText)
+            Box {
+                IconButton(onClick = { showMoreMenu = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "Diğer seçenekler", tint = toolbarContent)
+                }
+                DropdownMenu(
+                    expanded = showMoreMenu,
+                    onDismissRequest = { showMoreMenu = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Notlar ve yer imleri") },
+                        leadingIcon = { Icon(Icons.Default.PushPin, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            onNotesClick()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("İçindekiler") },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Article, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            onTocClick()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Okuma ayarları") },
+                        leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            onSettingsClick()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Ses seçimi") },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            onVoiceClick()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Atıflar") },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Article, contentDescription = null) },
+                        onClick = {
+                            showMoreMenu = false
+                            onCitationsClick()
+                        },
+                    )
+                }
             }
         }
 
@@ -645,8 +645,8 @@ private fun TopReaderBar(
             Text(
                 text = bookTitle,
                 fontWeight = FontWeight.Medium,
-                color = WhiteText,
-                fontSize = 16.sp,
+                color = toolbarContent,
+                fontSize = 15.sp,
                 maxLines = 1,
             )
         }
@@ -681,7 +681,22 @@ private fun BrightnessSubHeader(
                 inactiveTrackColor = scheme.dividerColor,
             ),
         )
-
+        Spacer(Modifier.width(10.dp))
+        Surface(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .clickable(onClick = onRenderModeToggle),
+            color = scheme.background.copy(alpha = 0.7f),
+            shape = RoundedCornerShape(50),
+        ) {
+            Text(
+                text = if (renderMode == "PAGE_IMAGE") "Sayfa" else "Metin",
+                color = scheme.textColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            )
+        }
     }
 }
 
@@ -912,34 +927,6 @@ private fun buildTextWithHighlights(
     }
 }
 
-@Composable
-private fun EngelleButton(
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit = {},
-) {
-    Box(
-        modifier = modifier
-            .padding(end = 16.dp, bottom = 16.dp)
-            .background(
-                color = DarkTeal,
-                shape = RoundedCornerShape(8.dp),
-            )
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Engelle",
-                color = WhiteText,
-                fontSize = 13.sp,
-            )
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BottomReaderNavBar(
@@ -954,7 +941,7 @@ private fun BottomReaderNavBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(DarkTeal)
+            .background(ReadProPalette.primaryDeep)
             .padding(
                 start = 12.dp,
                 end = 12.dp,
@@ -968,8 +955,8 @@ private fun BottomReaderNavBar(
                 .height(48.dp),
         ) {
             Text(
-                text = "Page ${currentPage.coerceIn(1, safeTotalPages)} of $safeTotalPages",
-                color = WhiteText,
+                text = "Sayfa ${currentPage.coerceIn(1, safeTotalPages)} / $safeTotalPages",
+                color = Color.White,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.align(Alignment.Center),
@@ -983,8 +970,8 @@ private fun BottomReaderNavBar(
             ) {
                 Icon(
                     imageVector = Icons.Filled.Refresh,
-                    contentDescription = "Rotate",
-                    tint = WhiteText,
+                    contentDescription = "Sayfayı yenile",
+                    tint = Color.White,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -998,7 +985,7 @@ private fun BottomReaderNavBar(
         ) {
             Text(
                 text = "1",
-                color = WhiteText.copy(alpha = 0.7f),
+                color = Color.White.copy(alpha = 0.72f),
                 fontSize = 11.sp,
             )
             Slider(
@@ -1013,25 +1000,25 @@ private fun BottomReaderNavBar(
                         contentDescription = "Page ${currentPage.coerceIn(1, safeTotalPages)} of $safeTotalPages"
                     },
                 colors = SliderDefaults.colors(
-                    thumbColor = ReaderProgressThumbColor,
-                    activeTrackColor = ReaderProgressTrackColor,
-                    inactiveTrackColor = ReaderProgressInactiveTrackColor,
-                    disabledThumbColor = ReaderProgressThumbColor.copy(alpha = 0.5f),
-                    disabledActiveTrackColor = ReaderProgressTrackColor.copy(alpha = 0.5f),
-                    disabledInactiveTrackColor = ReaderProgressInactiveTrackColor.copy(alpha = 0.5f),
+                    thumbColor = Color.White,
+                    activeTrackColor = ReadProPalette.warmStrong,
+                    inactiveTrackColor = Color.White.copy(alpha = 0.25f),
+                    disabledThumbColor = Color.White.copy(alpha = 0.5f),
+                    disabledActiveTrackColor = ReadProPalette.warmStrong.copy(alpha = 0.5f),
+                    disabledInactiveTrackColor = Color.White.copy(alpha = 0.14f),
                 ),
                 thumb = {
                     Box(
                         modifier = Modifier
                             .size(14.dp)
                             .clip(CircleShape)
-                            .background(ReaderProgressThumbColor),
+                            .background(Color.White),
                     )
                 },
             )
             Text(
                 text = safeTotalPages.toString(),
-                color = WhiteText.copy(alpha = 0.7f),
+                color = Color.White.copy(alpha = 0.72f),
                 fontSize = 11.sp,
             )
         }
@@ -1062,12 +1049,13 @@ private fun SearchTopBar(
     onPrevMatch: () -> Unit,
     onNextMatch: () -> Unit,
     focusRequester: FocusRequester,
+    scheme: ReaderColorScheme,
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(DarkTeal)
+            .background(ReadProPalette.primaryDeep)
             .padding(top = statusBarPadding.calculateTopPadding()),
     ) {
         Row(
@@ -1079,8 +1067,8 @@ private fun SearchTopBar(
             IconButton(onClick = onClose) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Close search",
-                    tint = WhiteText,
+                    contentDescription = "Aramayı kapat",
+                    tint = Color.White,
                 )
             }
 
@@ -1089,8 +1077,8 @@ private fun SearchTopBar(
                 onValueChange = onQueryChange,
                 placeholder = {
                     Text(
-                        "Search in document...",
-                        color = WhiteText.copy(alpha = 0.6f),
+                        "Dokümanda ara...",
+                        color = Color.White.copy(alpha = 0.6f),
                     )
                 },
                 singleLine = true,
@@ -1098,35 +1086,35 @@ private fun SearchTopBar(
                     .weight(1f)
                     .focusRequester(focusRequester),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = WhiteText,
-                    unfocusedTextColor = WhiteText,
-                    cursorColor = BlueHandle,
-                    focusedBorderColor = BlueHandle,
-                    unfocusedBorderColor = WhiteText.copy(alpha = 0.5f),
-                    focusedContainerColor = DarkTeal,
-                    unfocusedContainerColor = DarkTeal,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    cursorColor = scheme.accentColor,
+                    focusedBorderColor = scheme.accentColor,
+                    unfocusedBorderColor = Color.White.copy(alpha = 0.5f),
+                    focusedContainerColor = ReadProPalette.primaryDeep,
+                    unfocusedContainerColor = ReadProPalette.primaryDeep,
                 ),
             )
 
             if (matchCount > 0) {
                 Text(
                     text = "${currentMatch + 1}/$matchCount",
-                    color = WhiteText,
+                    color = Color.White,
                     fontSize = 13.sp,
                     modifier = Modifier.padding(horizontal = 8.dp),
                 )
                 IconButton(onClick = onPrevMatch, enabled = matchCount > 0) {
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowUp,
-                        contentDescription = "Previous match",
-                        tint = WhiteText,
+                        contentDescription = "Önceki sonuç",
+                        tint = Color.White,
                     )
                 }
                 IconButton(onClick = onNextMatch, enabled = matchCount > 0) {
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowDown,
-                        contentDescription = "Next match",
-                        tint = WhiteText,
+                        contentDescription = "Sonraki sonuç",
+                        tint = Color.White,
                     )
                 }
             }

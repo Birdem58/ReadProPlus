@@ -21,6 +21,27 @@ class UniversalDocumentExtractor(
         DjVuParser(),
     )
 
+    fun openFast(
+        context: Context,
+        uri: Uri,
+        password: String? = null,
+    ): PdfExtractionResult {
+        val extension = getExtension(context, uri)
+        if (extension.equals("pdf", ignoreCase = true)) {
+            return pdfExtractor.openFast(uri, password)
+        }
+        val parser = parsers.firstOrNull { it.canHandle(extension) }
+        if (parser != null) {
+            return try {
+                val doc = parser.parse(context, uri)
+                PdfExtractionResult.Success(doc)
+            } catch (e: Exception) {
+                PdfExtractionResult.Corrupted(e.message ?: "Failed to parse ${extension.uppercase()} document")
+            }
+        }
+        return pdfExtractor.openFast(uri, password)
+    }
+
     fun extract(
         context: Context,
         uri: Uri,
